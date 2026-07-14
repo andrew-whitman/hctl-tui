@@ -263,8 +263,8 @@ hts_tui_matrix_add() {
   project="$(hts_tui_ask "3/7 Project" "projectIdentifier")" || return 0
   identifier="$(hts_tui_ask "4/7 Pipeline" "pipelineIdentifier")" || return 0
   trigger="$(hts_tui_ask "5/7 Trigger" "triggerIdentifier")" || return 0
-  mset="$(hts_tui_ask "6/7 Set" "matrix set (e.g. shared)")" || return 0
-  branch="$(hts_tui_ask "7/7 Branch (optional)" "e.g. main — leave empty if inline")" || return 0
+  branch="$(hts_tui_ask "6/7 Branch (optional)" "e.g. main — leave empty if inline")" || return 0
+  mset="$(hts_tui_ask "7/7 Set" "matrix set (e.g. shared)")" || return 0
 
   [[ -n "$alias" && -n "$org" && -n "$project" && -n "$identifier" && -n "$trigger" && -n "$mset" ]] || {
     hts_gum_box_error "Alias, org, project, pipeline, trigger, and set are required."
