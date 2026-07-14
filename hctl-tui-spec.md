@@ -101,7 +101,7 @@ entries: []
 Flat home menu (active hctl profile used by default — no per-action picker):
 
 - Run test suite → module (skipped if one) → Run / Dry-run / Filter then run
-- Add pipeline → single gum write form (Ctrl+D save)
+- Add pipeline → five prompts: alias, org, project, pipeline id, trigger id
 - List pipelines / Remove pipeline (alias chooser)
 - Profiles / Settings (looping submenus)
 

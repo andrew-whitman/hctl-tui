@@ -388,10 +388,16 @@ hts_run_matrix() {
 import json,sys
 for e in json.load(sys.stdin):
     p=e.get("pipeline") or {}
+    etype=(e.get("type") or "github").lower()
+    # custom: trigger id is the webhook id. github execute: only pass explicit input_set.
+    if etype in ("custom", "webhook", "custom_webhook"):
+        trig=str(e.get("trigger") or "")
+    else:
+        trig=str(e.get("input_set") or "")
     print("\t".join([
         str(e.get("alias") or ""),
         str(e.get("type") or "github"),
-        str(e.get("trigger") or e.get("input_set") or ""),
+        trig,
         str(p.get("org") or ""),
         str(p.get("project") or ""),
         str(p.get("identifier") or ""),

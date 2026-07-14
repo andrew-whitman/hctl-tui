@@ -55,7 +55,7 @@ hts run --module ci --dry-run
 hts run --module ci --tech java --set shared
 hts matrix list --module ci
 hts matrix add --module ci \
-  --type github --alias my-alias \
+  --type github --alias my-alias --trigger YOUR_TRIGGER_ID \
   --tech java --set shared \
   --pipeline-org YOUR_ORG --pipeline-project YOUR_PROJECT --pipeline-id YOUR_PIPELINE_ID
 hts matrix remove --module ci --alias my-alias

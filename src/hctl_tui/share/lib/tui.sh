@@ -228,48 +228,15 @@ hts_tui_run_suite() {
   hts_tui_pause "Enter — back to menu"
 }
 
-hts_tui_parse_entry_form() {
-  # stdin: key: value form → prints TSV:
-  # module type alias trigger tech set org project pipeline branch
-  local raw
-  raw="$(/bin/cat)"
-  HTS_FORM_INPUT="$raw" hts_python - <<'PY'
-import os
-raw = os.environ.get("HTS_FORM_INPUT") or ""
-data = {}
-for line in raw.splitlines():
-    s = line.strip()
-    if not s or s.startswith("#") or ":" not in s:
-        continue
-    k, v = s.split(":", 1)
-    data[k.strip().lower()] = v.strip()
-
-def g(*keys, default=""):
-    for k in keys:
-        if data.get(k):
-            return data[k]
-    return default
-
-etype = g("type", default="github").lower()
-if etype in ("webhook", "custom_webhook"):
-    etype = "custom"
-if etype not in ("github", "custom"):
-    etype = "github"
-
-vals = [
-    g("module", default="ci"),
-    etype,
-    g("alias"),
-    g("trigger", "input_set", "inputset"),
-    g("tech", default="java"),
-    g("set", default="shared"),
-    g("org", "pipeline.org"),
-    g("project", "pipeline.project"),
-    g("pipeline", "pipeline_id", "identifier", "pipeline.identifier"),
-    g("branch"),
-]
-print("\t".join(vals))
-PY
+hts_tui_ask() {
+  # usage: hts_tui_ask <header> <placeholder> [required=1]
+  local header="$1" ph="$2" required="${3:-1}" val=""
+  val="$(hts_gum_input --header "$header" --placeholder "$ph")" || return 1
+  val="$(hts_trim "$val")"
+  if [[ -z "$val" && "$required" == "1" ]]; then
+    return 1
+  fi
+  print -- "$val"
 }
 
 hts_tui_matrix_add() {
@@ -279,51 +246,36 @@ hts_tui_matrix_add() {
   fi
   hts_profile_use "$profile" >/dev/null
 
-  local def_mod form module etype alias trigger tech set_ org project identifier branch
-  def_mod="$(hts_default_module)"
+  local module alias org project identifier trigger
+  module="$(hts_default_module)"
 
   hts_tui_clear
-  form="$(
-    gum write \
-      --header "Add pipeline  ·  profile ${profile}  ·  Ctrl+D to save, Esc cancel" \
-      --height 16 \
-      --value "$(/bin/cat <<EOF
-module: ${def_mod}
-type: github
-alias: 
-tech: java
-set: shared
-org: 
-project: 
-pipeline: 
-trigger: 
-branch: 
-EOF
-)"
-  )" || return 0
+  {
+    print -- "Add pipeline"
+    print -- "profile=$profile  module=$module"
+    print -- "Five fields — then Run will execute the pipeline."
+  } | hts_tui_show
+  print -- "" >/dev/tty 2>/dev/null || print -- ""
 
-  local parsed
-  parsed="$(print -- "$form" | hts_tui_parse_entry_form)"
-  IFS=$'\t' read -r module etype alias trigger tech set_ org project identifier branch <<<"$parsed"
+  alias="$(hts_tui_ask "1/5 Alias" "short name")" || return 0
+  org="$(hts_tui_ask "2/5 Org" "orgIdentifier")" || return 0
+  project="$(hts_tui_ask "3/5 Project" "projectIdentifier")" || return 0
+  identifier="$(hts_tui_ask "4/5 Pipeline" "pipelineIdentifier")" || return 0
+  trigger="$(hts_tui_ask "5/5 Trigger" "triggerIdentifier")" || return 0
 
-  if [[ -z "$alias" || -z "$org" || -z "$project" || -z "$identifier" ]]; then
-    hts_tui_clear
-    hts_gum_box_error "Need alias, org, project, and pipeline."
+  [[ -n "$alias" && -n "$org" && -n "$project" && -n "$identifier" && -n "$trigger" ]] || {
+    hts_gum_box_error "All five fields are required."
     hts_tui_pause
-    return 1
-  fi
-  if [[ "$etype" == "custom" && -z "$trigger" ]]; then
-    hts_tui_clear
-    hts_gum_box_error "type=custom requires trigger."
-    hts_tui_pause
-    return 1
-  fi
+    return 0
+  }
 
-  hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" "$branch" >/dev/null
-  hts_cfg_set_str '.defaults.module' "$module" >/dev/null 2>&1 || true
+  hts_matrix_add "$profile" "$module" "$alias" "$trigger" "java" "shared" \
+    "$org" "$project" "$identifier" "github" "" >/dev/null
   hts_tui_clear
-  hts_gum_box "Saved $alias" "type=$etype  module=$module"
-  # brief pause only so the confirmation is readable
+  hts_gum_box \
+    "Saved: $alias" \
+    "$org / $project / $identifier" \
+    "trigger: $trigger"
   hts_tui_pause "Enter — done"
 }
 
