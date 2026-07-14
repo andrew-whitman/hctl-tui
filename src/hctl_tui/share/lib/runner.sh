@@ -253,7 +253,7 @@ hts_fire_pipeline_execute() {
   fi
 
   local resp ec=0 errfile
-  errfile="$(mktemp "${TMPDIR:-/tmp}/hts-hctl.XXXXXX")" || {
+  errfile="$(hts_mktemp hts-hctl)" || {
     hts_err "could not create temp file"
     return 1
   }

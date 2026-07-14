@@ -149,7 +149,7 @@ hts_install_gum_from_github() {
   triple="$(hts_gum_asset_triple)" || return 1
   dest="$(hts_user_bin_dir)"
   /bin/mkdir -p "$dest"
-  tmp="$(mktemp -d)"
+  tmp="$(hts_mktemp -d gum-dl)"
 
   tag="$(
     hts_curl -fsSL https://api.github.com/repos/charmbracelet/gum/releases/latest \

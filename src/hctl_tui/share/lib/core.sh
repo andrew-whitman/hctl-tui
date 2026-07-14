@@ -48,10 +48,11 @@ hts_cmd() {
   bin="$(command -v "$name" 2>/dev/null || true)"
   if [[ -z "$bin" || ! -x "$bin" ]]; then
     case "$name" in
-      curl) bin=/usr/bin/curl; [[ -x $bin ]] || bin=/bin/curl ;;
-      tar)  bin=/usr/bin/tar;  [[ -x $bin ]] || bin=/bin/tar ;;
-      open) bin=/usr/bin/open ;;
-      *)    bin="" ;;
+      curl)   bin=/usr/bin/curl; [[ -x $bin ]] || bin=/bin/curl ;;
+      tar)    bin=/usr/bin/tar;  [[ -x $bin ]] || bin=/bin/tar ;;
+      open)   bin=/usr/bin/open ;;
+      mktemp) bin=/usr/bin/mktemp; [[ -x $bin ]] || bin=/bin/mktemp ;;
+      *)      bin="" ;;
     esac
   fi
   if [[ -z "$bin" || ! -x "$bin" ]]; then
@@ -59,6 +60,35 @@ hts_cmd() {
     return 127
   fi
   "$bin" "$@"
+}
+
+# Create a temp file (or dir with -d); never rely on a sparse PATH for mktemp.
+hts_mktemp() {
+  local dir=0 prefix=hts
+  while (( $# )); do
+    case "$1" in
+      -d) dir=1; shift ;;
+      *)  prefix="$1"; shift; break ;;
+    esac
+  done
+  local f template="${TMPDIR:-/tmp}/${prefix}.XXXXXX"
+  if (( dir )); then
+    if f="$(hts_cmd mktemp -d "$template" 2>/dev/null)"; then
+      print -- "$f"
+      return 0
+    fi
+    f="${TMPDIR:-/tmp}/${prefix}.$$.$RANDOM"
+    /bin/mkdir -p "$f" 2>/dev/null || return 1
+    print -- "$f"
+    return 0
+  fi
+  if f="$(hts_cmd mktemp "$template" 2>/dev/null)"; then
+    print -- "$f"
+    return 0
+  fi
+  f="${TMPDIR:-/tmp}/${prefix}.$$.$RANDOM"
+  : >"$f" 2>/dev/null || return 1
+  print -- "$f"
 }
 
 hts_curl() { hts_cmd curl "$@"; }
