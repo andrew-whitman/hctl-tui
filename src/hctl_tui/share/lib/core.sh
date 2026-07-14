@@ -102,7 +102,7 @@ hts_format_entries() {
   local cols raw
   cols="$(hts_term_cols)"
   # Capture stdin before the heredoc steals it for the Python program.
-  raw="$(cat)"
+  raw="$(/bin/cat)"
   HTS_FMT_INPUT="$raw" hts_python - "$cols" <<'PY'
 import json, os, sys
 
@@ -210,7 +210,7 @@ PY
 hts_format_results() {
   local cols raw
   cols="$(hts_term_cols)"
-  raw="$(cat)"
+  raw="$(/bin/cat)"
   HTS_FMT_INPUT="$raw" hts_python - "$cols" <<'PY'
 import os, sys
 
