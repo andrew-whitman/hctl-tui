@@ -143,23 +143,84 @@ hts_tui_profiles() {
   esac
 }
 
+hts_tui_matrix_progress() {
+  # Show filled vs pending fields while collecting a matrix entry.
+  # usage: hts_tui_matrix_progress profile module alias trigger tech set org project identifier
+  local profile="$1" module="$2" alias="$3" trigger="$4" tech="$5" set_="$6" org="$7" project="$8" identifier="$9"
+  local line filled pending
+
+  filled=()
+  pending=()
+  [[ -n "$module" ]]     && filled+=("module:     $module")     || pending+=("module")
+  [[ -n "$alias" ]]      && filled+=("alias:      $alias")      || pending+=("alias")
+  [[ -n "$trigger" ]]    && filled+=("trigger:    $trigger")    || pending+=("trigger")
+  [[ -n "$tech" ]]       && filled+=("tech:       $tech")       || pending+=("tech")
+  [[ -n "$set_" ]]       && filled+=("set:        $set_")       || pending+=("set")
+  [[ -n "$org" ]]        && filled+=("org:        $org")        || pending+=("org")
+  [[ -n "$project" ]]    && filled+=("project:    $project")    || pending+=("project")
+  [[ -n "$identifier" ]] && filled+=("pipeline:   $identifier") || pending+=("pipeline")
+
+  /usr/bin/clear 2>/dev/null || true
+  {
+    print -- "New matrix entry  (profile: $profile)"
+    print -- ""
+    if (( ${#filled[@]} )); then
+      print -- "Entered:"
+      for line in "${filled[@]}"; do
+        print -- "  ✓ $line"
+      done
+    else
+      print -- "Entered: (none yet)"
+    fi
+    if (( ${#pending[@]} )); then
+      print -- ""
+      print -- "Still needed: ${(j:, :)pending}"
+    else
+      print -- ""
+      print -- "All fields complete — confirm to save."
+    fi
+  } | gum style --border rounded --padding "0 1" --border-foreground 212
+  print -- ""
+}
+
 hts_tui_matrix_add() {
   local profile="${1:-$(hts_active_profile)}"
-  local module alias trigger tech set_ org project identifier
+  local module="" alias="" trigger="" tech="" set_="" org="" project="" identifier=""
 
+  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
   module="$(gum input --placeholder "module (e.g. ci, cd)")" || return 1
-  alias="$(gum input --placeholder "alias (short name for this matrix entry)")" || return 1
-  trigger="$(gum input --placeholder "trigger (Harness custom trigger identifier)")" || return 1
-  tech="$(gum input --placeholder "tech (e.g. java, go, python)")" || return 1
-  set_="$(gum input --placeholder "set (e.g. shared, exclusive)")" || return 1
-  org="$(gum input --placeholder "pipeline org (Harness orgIdentifier)")" || return 1
-  project="$(gum input --placeholder "pipeline project (Harness projectIdentifier)")" || return 1
-  identifier="$(gum input --placeholder "pipeline identifier (Harness pipelineIdentifier)")" || return 1
+  [[ -n "$module" ]] || { gum style --foreground 196 "module is required."; return 1; }
 
-  if [[ -z "$module" || -z "$alias" || -z "$trigger" || -z "$tech" || -z "$set_" || -z "$org" || -z "$project" || -z "$identifier" ]]; then
-    gum style --foreground 196 "All fields are required — nothing was saved."
-    return 1
-  fi
+  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
+  alias="$(gum input --placeholder "alias (short name for this matrix entry)")" || return 1
+  [[ -n "$alias" ]] || { gum style --foreground 196 "alias is required."; return 1; }
+
+  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
+  trigger="$(gum input --placeholder "trigger (Harness custom trigger identifier)")" || return 1
+  [[ -n "$trigger" ]] || { gum style --foreground 196 "trigger is required."; return 1; }
+
+  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
+  tech="$(gum input --placeholder "tech (e.g. java, go, python)")" || return 1
+  [[ -n "$tech" ]] || { gum style --foreground 196 "tech is required."; return 1; }
+
+  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
+  set_="$(gum input --placeholder "set (e.g. shared, exclusive)")" || return 1
+  [[ -n "$set_" ]] || { gum style --foreground 196 "set is required."; return 1; }
+
+  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
+  org="$(gum input --placeholder "pipeline org (Harness orgIdentifier)")" || return 1
+  [[ -n "$org" ]] || { gum style --foreground 196 "org is required."; return 1; }
+
+  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
+  project="$(gum input --placeholder "pipeline project (Harness projectIdentifier)")" || return 1
+  [[ -n "$project" ]] || { gum style --foreground 196 "project is required."; return 1; }
+
+  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
+  identifier="$(gum input --placeholder "pipeline identifier (Harness pipelineIdentifier)")" || return 1
+  [[ -n "$identifier" ]] || { gum style --foreground 196 "pipeline identifier is required."; return 1; }
+
+  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
+  gum confirm "Save this matrix entry?" || return 0
 
   hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
   gum style --foreground 212 "Saved $alias → matrices/$profile/$module.yaml"
