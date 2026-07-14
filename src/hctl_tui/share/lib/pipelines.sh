@@ -23,35 +23,13 @@ hts_matrix_list() {
     hts_log "no matrix for profile=$profile module=$module"
     return 0
   fi
-  hts_python - "$path" <<'PY'
-import sys
-path = sys.argv[1]
-try:
-    import yaml
-except ImportError:
-    # Minimal display without PyYAML: print file
-    print(open(path).read())
-    sys.exit(0)
-
-data = yaml.safe_load(open(path)) or {}
-entries = data.get("entries") or []
-if not entries:
-    print("(empty matrix)")
-    sys.exit(0)
-fmt = "{:<24} {:<16} {:<10} {:<10} {}"
-print(fmt.format("ALIAS", "TRIGGER", "TECH", "SET", "PIPELINE"))
-print("-" * 80)
-for e in entries:
-    pipe = e.get("pipeline") or {}
-    pid = f"{pipe.get('org','')}/{pipe.get('project','')}/{pipe.get('identifier','')}"
-    print(fmt.format(
-        str(e.get("alias") or ""),
-        str(e.get("trigger") or ""),
-        str(e.get("tech") or ""),
-        str(e.get("set") or ""),
-        pid,
-    ))
-PY
+  local entries
+  entries="$(hts_matrix_entries_json "$profile" "$module")"
+  if [[ "$entries" == "[]" ]]; then
+    print -- "(empty matrix)"
+    return 0
+  fi
+  print -- "$entries" | hts_format_entries
 }
 
 hts_matrix_entries_json() {

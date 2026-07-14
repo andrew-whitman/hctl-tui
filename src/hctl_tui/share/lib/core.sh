@@ -24,6 +24,248 @@ hts_python() {
   fi
 }
 
+# --- terminal size / adaptive display ---
+
+hts_term_cols() {
+  local c="${COLUMNS:-}"
+  if [[ -z "$c" || "$c" -lt 1 ]]; then
+    c="$(tput cols 2>/dev/null || true)"
+  fi
+  if [[ -z "$c" || "$c" -lt 1 ]] && [[ -r /dev/tty ]]; then
+    c="$(stty size </dev/tty 2>/dev/null | awk '{print $2}')"
+  fi
+  if [[ -z "$c" || "$c" -lt 20 ]]; then
+    c=80
+  fi
+  print -- "$c"
+}
+
+hts_term_rows() {
+  local r="${LINES:-}"
+  if [[ -z "$r" || "$r" -lt 1 ]]; then
+    r="$(tput lines 2>/dev/null || true)"
+  fi
+  if [[ -z "$r" || "$r" -lt 1 ]] && [[ -r /dev/tty ]]; then
+    r="$(stty size </dev/tty 2>/dev/null | awk '{print $1}')"
+  fi
+  if [[ -z "$r" || "$r" -lt 8 ]]; then
+    r=24
+  fi
+  print -- "$r"
+}
+
+hts_gum_width() {
+  # Leave a little margin for borders/padding inside the viewport.
+  local w
+  w="$(hts_term_cols)"
+  w=$(( w - 2 ))
+  (( w < 32 )) && w=32
+  print -- "$w"
+}
+
+# Render a bordered gum box that fits the current terminal width.
+# Args are either strings (gum style args) or stdin is used when no args.
+hts_gum_box() {
+  local fg="${HTS_GUM_FG:-212}"
+  local w
+  w="$(hts_gum_width)"
+  if (( $# )); then
+    gum style --border rounded --padding "0 1" --width "$w" --border-foreground "$fg" "$@"
+  else
+    gum style --border rounded --padding "0 1" --width "$w" --border-foreground "$fg"
+  fi
+}
+
+hts_gum_box_warn()  { HTS_GUM_FG=214 hts_gum_box "$@"; }
+hts_gum_box_error() { HTS_GUM_FG=196 hts_gum_box "$@"; }
+
+# Truncate a string to max width with an ellipsis when needed.
+hts_trunc() {
+  local s="$1" max="${2:-40}"
+  hts_python -c '
+import sys
+s, max_w = sys.argv[1], int(sys.argv[2])
+if max_w < 1:
+    print("")
+elif len(s) <= max_w:
+    print(s)
+elif max_w <= 1:
+    print("…")
+else:
+    print(s[: max_w - 1] + "…")
+' "$s" "$max"
+}
+
+# Format matrix entries (JSON array on stdin) for the current terminal width.
+# Wide: aligned columns. Narrow: stacked cards.
+hts_format_entries() {
+  local cols raw
+  cols="$(hts_term_cols)"
+  # Capture stdin before the heredoc steals it for the Python program.
+  raw="$(cat)"
+  HTS_FMT_INPUT="$raw" hts_python - "$cols" <<'PY'
+import json, os, sys
+
+cols = int(sys.argv[1]) if sys.argv[1].isdigit() else 80
+raw = (os.environ.get("HTS_FMT_INPUT") or "").strip() or "[]"
+try:
+    entries = json.loads(raw)
+except json.JSONDecodeError:
+    print(raw)
+    raise SystemExit(0)
+
+if not entries:
+    print("(empty)")
+    raise SystemExit(0)
+
+def trunc(s, n):
+    s = str(s or "")
+    if n <= 0:
+        return ""
+    if len(s) <= n:
+        return s
+    if n == 1:
+        return "…"
+    return s[: n - 1] + "…"
+
+def pipeline(e):
+    p = e.get("pipeline") or {}
+    return "{}/{}/{}".format(p.get("org") or "", p.get("project") or "", p.get("identifier") or "")
+
+# Narrow terminals: stacked cards (readable at any width)
+if cols < 72:
+    width = max(24, cols - 2)
+    for i, e in enumerate(entries):
+        if i:
+            print("-" * min(width, cols))
+        rows = [
+            ("alias", e.get("alias") or ""),
+            ("trigger", e.get("trigger") or ""),
+            ("tech", e.get("tech") or ""),
+            ("set", e.get("set") or ""),
+            ("pipeline", pipeline(e)),
+        ]
+        label_w = 9  # len("pipeline:")
+        val_w = max(8, width - label_w - 1)
+        for label, val in rows:
+            print("{:<{lw}} {}".format(label + ":", trunc(val, val_w), lw=label_w))
+    raise SystemExit(0)
+
+# Wide: distribute columns to fit terminal
+# budgets for alias, trigger, tech, set; pipeline takes the rest
+headers = ["ALIAS", "TRIGGER", "TECH", "SET", "PIPELINE"]
+keys = ["alias", "trigger", "tech", "set", "pipeline"]
+rows = []
+for e in entries:
+    rows.append([
+        str(e.get("alias") or ""),
+        str(e.get("trigger") or ""),
+        str(e.get("tech") or ""),
+        str(e.get("set") or ""),
+        pipeline(e),
+    ])
+
+# Natural widths (min of content / generous caps)
+caps = [20, 18, 10, 10, 60]
+mins = [5, 7, 4, 3, 8]
+natural = []
+for i in range(5):
+    w = len(headers[i])
+    for r in rows:
+        w = max(w, len(r[i]))
+    natural.append(min(caps[i], max(mins[i], w)))
+
+# gaps: 4 spaces between 5 cols
+sep = 1
+avail = cols - sep * 4
+total = sum(natural)
+if total > avail:
+    # Shrink from the right (pipeline first), then evenly
+    overflow = total - avail
+    order = [4, 0, 1, 2, 3]
+    for i in order:
+        if overflow <= 0:
+            break
+        can = natural[i] - mins[i]
+        cut = min(can, overflow)
+        natural[i] -= cut
+        overflow -= cut
+
+widths = natural
+
+def fmt_row(vals):
+    parts = []
+    for i, v in enumerate(vals):
+        parts.append("{:<{w}}".format(trunc(v, widths[i]), w=widths[i]))
+    return (" " * sep).join(parts)
+
+print(fmt_row(headers))
+print("-" * min(cols, sum(widths) + sep * 4))
+for r in rows:
+    print(fmt_row(r))
+PY
+}
+
+# Format run results (TSV alias/status/url lines on stdin) for terminal width.
+hts_format_results() {
+  local cols raw
+  cols="$(hts_term_cols)"
+  raw="$(cat)"
+  HTS_FMT_INPUT="$raw" hts_python - "$cols" <<'PY'
+import os, sys
+
+cols = int(sys.argv[1]) if sys.argv[1].isdigit() else 80
+raw = os.environ.get("HTS_FMT_INPUT") or ""
+lines = [ln.rstrip("\n") for ln in raw.splitlines() if ln.strip()]
+if not lines:
+    print("(no results)")
+    raise SystemExit(0)
+
+def trunc(s, n):
+    s = str(s or "")
+    if n <= 0:
+        return ""
+    if len(s) <= n:
+        return s
+    if n == 1:
+        return "…"
+    return s[: n - 1] + "…"
+
+rows = []
+for ln in lines:
+    parts = ln.split("\t")
+    while len(parts) < 3:
+        parts.append("")
+    rows.append(parts[:3])
+
+print("RESULTS")
+if cols < 56:
+    width = max(24, cols)
+    for i, (alias, status, url) in enumerate(rows):
+        if i:
+            print("-" * min(width, cols))
+        print("alias:  " + trunc(alias, max(8, width - 8)))
+        print("status: " + trunc(status, max(8, width - 8)))
+        if url:
+            print("url:    " + trunc(url, max(8, width - 8)))
+else:
+    # alias | status | url
+    w_status = 10
+    w_alias = min(28, max(8, cols // 4))
+    w_url = max(12, cols - w_alias - w_status - 2)
+    print("{:<{a}} {:<{s}} {}".format("ALIAS", "STATUS", "URL", a=w_alias, s=w_status))
+    print("-" * min(cols, w_alias + w_status + w_url + 2))
+    for alias, status, url in rows:
+        print("{:<{a}} {:<{s}} {}".format(
+            trunc(alias, w_alias),
+            trunc(status, w_status),
+            trunc(url, w_url),
+            a=w_alias,
+            s=w_status,
+        ))
+PY
+}
+
 hts_require_deps() {
   # usage: hts_require_deps [tui|run|any]
   local mode="${1:-any}"

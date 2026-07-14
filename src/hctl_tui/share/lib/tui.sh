@@ -24,6 +24,15 @@ hts_tui_pause() {
   gum input --placeholder "$msg" --value "" >/dev/null || true
 }
 
+hts_gum_choose_height() {
+  local r
+  r="$(hts_term_rows)"
+  r=$(( r - 8 ))
+  (( r < 5 )) && r=5
+  (( r > 16 )) && r=16
+  print -- "$r"
+}
+
 hts_tui_main() {
   hts_require_deps tui || return 1
   hts_ensure_config
@@ -34,9 +43,12 @@ hts_tui_main() {
   while true; do
     hts_tui_clear
     local choice
+    local hdr
+    hdr="$(hts_trunc "hctl-tui — Harness test-suite orchestration (via hctl)" "$(( $(hts_term_cols) - 4 ))")"
     choice="$(
       gum choose \
-        --header "hctl-tui — Harness test-suite orchestration (via hctl)" \
+        --height="$(hts_gum_choose_height)" \
+        --header "$hdr" \
         "Run test suite" \
         "Manage profiles" \
         "Manage pipelines" \
@@ -67,7 +79,7 @@ hts_tui_pick_profile() {
 
   hts_tui_clear
   if (( ${#names[@]} == 0 )); then
-    gum style --border rounded --padding "0 1" --border-foreground 196 \
+    hts_gum_box_error \
       "No hctl profiles found" "Creating one via hctl init…"
     print -- ""
     hts_profile_init
@@ -78,7 +90,12 @@ hts_tui_pick_profile() {
   local active
   active="$(hts_active_profile)"
   local picked
-  picked="$(gum choose --header "Profile (active: $active)" "${names[@]}")" || return 1
+  picked="$(
+    gum choose \
+      --height="$(hts_gum_choose_height)" \
+      --header "$(hts_trunc "Profile (active: $active)" "$(( $(hts_term_cols) - 4 ))")" \
+      "${names[@]}"
+  )" || return 1
   print -- "$picked"
 }
 
@@ -96,7 +113,7 @@ hts_tui_run_suite() {
 
   if (( ${#modules[@]} == 0 )); then
     hts_tui_clear
-    gum style --border rounded --padding "0 1" --border-foreground 214 \
+    hts_gum_box_warn \
       "No matrices for profile '$profile'."
     print -- ""
     if gum confirm "Create a matrix entry now?"; then
@@ -113,7 +130,7 @@ hts_tui_run_suite() {
   (( ${#modules[@]} == 0 )) && return 0
 
   hts_tui_clear
-  module="$(gum choose --header "Module" "${modules[@]}")" || return 1
+  module="$(gum choose --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 1
 
   hts_tui_clear
   if gum confirm --default=false "Filter by tech/set/alias?"; then
@@ -138,14 +155,16 @@ hts_tui_run_suite() {
 
   hts_tui_clear
   {
-    print -- "Preview — profile=$profile module=$module"
-    [[ -n "$tech" ]] && print -- "tech=$tech"
-    [[ -n "$set_" ]] && print -- "set=$set_"
-    [[ -n "$aliases" ]] && print -- "alias=$aliases"
+    local tw
+    tw="$(hts_term_cols)"
+    print -- "$(hts_trunc "Preview — profile=$profile module=$module" "$tw")"
+    [[ -n "$tech" ]] && print -- "$(hts_trunc "tech=$tech" "$tw")"
+    [[ -n "$set_" ]] && print -- "$(hts_trunc "set=$set_" "$tw")"
+    [[ -n "$aliases" ]] && print -- "$(hts_trunc "alias=$aliases" "$tw")"
     (( dry_run )) && print -- "mode=dry-run"
     print -- ""
     hts_preview_matrix "$profile" "$module" "$tech" "$set_" "$aliases"
-  } | gum style --border rounded --padding "0 1" --border-foreground 212
+  } | hts_gum_box
   print -- ""
   gum confirm "Run this?" || return 0
 
@@ -159,6 +178,7 @@ hts_tui_profiles() {
   local action
   action="$(
     gum choose \
+      --height="$(hts_gum_choose_height)" \
       --header "Manage profiles" \
       "List profiles" \
       "Switch active profile" \
@@ -170,7 +190,7 @@ hts_tui_profiles() {
   case "$action" in
     "List profiles")
       hts_tui_clear
-      hts_profile_list | gum style --border rounded --padding "0 1" --border-foreground 212
+      hts_profile_list | hts_gum_box
       hts_tui_pause
       ;;
     "Switch active profile")
@@ -178,7 +198,7 @@ hts_tui_profiles() {
       p="$(hts_tui_pick_profile)" || return 0
       hts_profile_use "$p"
       hts_tui_clear
-      gum style --border rounded --padding "0 1" --border-foreground 212 "Active profile: $p"
+      hts_gum_box "Active profile: $p"
       hts_tui_pause
       ;;
     "Init / create profile (hctl)")
@@ -199,21 +219,26 @@ hts_tui_profiles() {
 hts_tui_matrix_progress() {
   # Render progress card only (caller clears the screen first).
   local profile="$1" module="$2" alias="$3" trigger="$4" tech="$5" set_="$6" org="$7" project="$8" identifier="$9"
-  local line filled pending
+  local line filled pending tw vw
+
+  tw="$(hts_term_cols)"
+  vw=$(( tw - 16 ))
+  (( vw < 12 )) && vw=12
 
   filled=()
   pending=()
-  [[ -n "$module" ]]     && filled+=("module:     $module")     || pending+=("module")
-  [[ -n "$alias" ]]      && filled+=("alias:      $alias")      || pending+=("alias")
-  [[ -n "$trigger" ]]    && filled+=("trigger:    $trigger")    || pending+=("trigger")
-  [[ -n "$tech" ]]       && filled+=("tech:       $tech")       || pending+=("tech")
-  [[ -n "$set_" ]]       && filled+=("set:        $set_")       || pending+=("set")
-  [[ -n "$org" ]]        && filled+=("org:        $org")        || pending+=("org")
-  [[ -n "$project" ]]    && filled+=("project:    $project")    || pending+=("project")
-  [[ -n "$identifier" ]] && filled+=("pipeline:   $identifier") || pending+=("pipeline")
+  [[ -n "$module" ]]     && filled+=("module:     $(hts_trunc "$module" "$vw")")     || pending+=("module")
+  [[ -n "$alias" ]]      && filled+=("alias:      $(hts_trunc "$alias" "$vw")")      || pending+=("alias")
+  [[ -n "$trigger" ]]    && filled+=("trigger:    $(hts_trunc "$trigger" "$vw")")    || pending+=("trigger")
+  [[ -n "$tech" ]]       && filled+=("tech:       $(hts_trunc "$tech" "$vw")")       || pending+=("tech")
+  [[ -n "$set_" ]]       && filled+=("set:        $(hts_trunc "$set_" "$vw")")       || pending+=("set")
+  [[ -n "$org" ]]        && filled+=("org:        $(hts_trunc "$org" "$vw")")        || pending+=("org")
+  [[ -n "$project" ]]    && filled+=("project:    $(hts_trunc "$project" "$vw")")    || pending+=("project")
+  [[ -n "$identifier" ]] && filled+=("pipeline:   $(hts_trunc "$identifier" "$vw")") || pending+=("pipeline")
 
   {
-    print -- "New matrix entry  (profile: $profile)"
+    print -- "New matrix entry"
+    print -- "profile: $(hts_trunc "$profile" "$vw")"
     print -- ""
     if (( ${#filled[@]} )); then
       print -- "Entered:"
@@ -225,12 +250,12 @@ hts_tui_matrix_progress() {
     fi
     if (( ${#pending[@]} )); then
       print -- ""
-      print -- "Still needed: ${(j:, :)pending}"
+      print -- "Still needed: $(hts_trunc "${(j:, :)pending}" "$vw")"
     else
       print -- ""
       print -- "All fields complete — confirm to save."
     fi
-  } | gum style --border rounded --padding "0 1" --border-foreground 212
+  } | hts_gum_box
   print -- ""
 }
 
@@ -245,7 +270,7 @@ hts_tui_matrix_prompt() {
   __val="$(gum input --placeholder "$__ph")" || return 1
   [[ -n "$__val" ]] || {
     hts_tui_clear
-    gum style --border rounded --padding "0 1" --border-foreground 196 "${__var} is required."
+    hts_gum_box_error "${__var} is required."
     hts_tui_pause
     return 1
   }
@@ -279,8 +304,10 @@ hts_tui_matrix_add() {
 
   hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
   hts_tui_clear
-  gum style --border rounded --padding "0 1" --border-foreground 212 \
-    "Saved $alias" "matrices/$profile/$module.yaml"
+  local path_show
+  path_show="$(hts_trunc "matrices/$profile/$module.yaml" "$(( $(hts_term_cols) - 8 ))")"
+  hts_gum_box \
+    "$(hts_trunc "Saved $alias" "$(( $(hts_term_cols) - 8 ))")" "$path_show"
   hts_tui_pause
 }
 
@@ -293,7 +320,8 @@ hts_tui_pipelines() {
   local action
   action="$(
     gum choose \
-      --header "Manage pipelines (profile: $profile)" \
+      --height="$(hts_gum_choose_height)" \
+      --header "Manage pipelines (profile: $(hts_trunc "$profile" 24))" \
       "List matrix" \
       "Add / update entry" \
       "Remove entry" \
@@ -306,13 +334,13 @@ hts_tui_pipelines() {
       while IFS= read -r m; do [[ -n "$m" ]] && modules+=("$m"); done < <(hts_list_modules "$profile")
       hts_tui_clear
       if (( ${#modules[@]} == 0 )); then
-        gum style --border rounded --padding "0 1" "No matrices yet."
+        hts_gum_box "No matrices yet."
         hts_tui_pause
         return 0
       fi
-      module="$(gum choose --header "Module" "${modules[@]}")" || return 0
+      module="$(gum choose --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 0
       hts_tui_clear
-      hts_matrix_list "$profile" "$module" | gum style --border rounded --padding "0 1" --border-foreground 212
+      hts_matrix_list "$profile" "$module" | hts_gum_box
       hts_tui_pause
       ;;
     "Add / update entry")
@@ -323,16 +351,16 @@ hts_tui_pipelines() {
       while IFS= read -r m; do [[ -n "$m" ]] && modules+=("$m"); done < <(hts_list_modules "$profile")
       hts_tui_clear
       (( ${#modules[@]} == 0 )) && {
-        gum style --border rounded --padding "0 1" "No matrices."
+        hts_gum_box "No matrices."
         hts_tui_pause
         return 0
       }
-      module="$(gum choose --header "Module" "${modules[@]}")" || return 0
+      module="$(gum choose --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 0
       hts_tui_clear
       alias="$(gum input --placeholder "alias to remove")" || return 0
       hts_matrix_remove "$profile" "$module" "$alias"
       hts_tui_clear
-      gum style --border rounded --padding "0 1" --border-foreground 212 "Removed: $alias"
+      hts_gum_box "Removed: $alias"
       hts_tui_pause
       ;;
     *) return 0 ;;
@@ -344,6 +372,7 @@ hts_tui_settings() {
   local action
   action="$(
     gum choose \
+      --height="$(hts_gum_choose_height)" \
       --header "Settings" \
       "Set default module" \
       "Toggle open_urls" \
@@ -358,7 +387,7 @@ hts_tui_settings() {
       [[ -n "$mod" ]] || return 0
       hts_cfg_set_str '.defaults.module' "$mod"
       hts_tui_clear
-      gum style --border rounded --padding "0 1" --border-foreground 212 "default module: $mod"
+      hts_gum_box "default module: $mod"
       hts_tui_pause
       ;;
     "Toggle open_urls")
@@ -367,7 +396,7 @@ hts_tui_settings() {
       if [[ "$cur" == "true" ]]; then new=false; else new=true; fi
       hts_cfg_set_str '.defaults.open_urls' "$new"
       hts_tui_clear
-      gum style --border rounded --padding "0 1" --border-foreground 212 "open_urls: $new"
+      hts_gum_box "open_urls: $new"
       hts_tui_pause
       ;;
     *) return 0 ;;

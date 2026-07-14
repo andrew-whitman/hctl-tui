@@ -184,7 +184,7 @@ except Exception:
       fail=$((fail + 1))
       hts_err "trigger error for $alias"
     fi
-    results+=("$(printf '%-24s %-10s %s' "$alias" "$trig_status" "${ui_url:-}")")
+    results+=("${alias}"$'\t'"${trig_status}"$'\t'"${ui_url:-}")
   done < <(print -- "$filtered" | hts_python -c '
 import json,sys
 for e in json.load(sys.stdin):
@@ -199,12 +199,11 @@ for e in json.load(sys.stdin):
 ')
 
   print -- ""
-  print -- "RESULTS"
-  print -- "-------"
-  local r
-  for r in "${results[@]}"; do
-    print -- "$r"
-  done
+  if (( ${#results[@]} )); then
+    print -l -- "${results[@]}" | hts_format_results
+  else
+    print -- "(no results)"
+  fi
   print -- ""
   hts_log "done: ok=$ok fail=$fail"
   (( fail == 0 ))
@@ -215,18 +214,9 @@ hts_preview_matrix() {
   local entries filtered
   entries="$(hts_matrix_entries_json "$profile" "$module")"
   filtered="$(print -- "$entries" | hts_matrix_filter "$tech" "$set_" "$aliases")"
-  print -- "$filtered" | hts_python -c '
-import json, sys
-entries = json.load(sys.stdin)
-if not entries:
-    print("(no matching entries)")
-    raise SystemExit(0)
-fmt = "{:<24} {:<16} {:<10} {:<10} {}"
-print(fmt.format("ALIAS", "TRIGGER", "TECH", "SET", "PIPELINE"))
-print("-" * 80)
-for e in entries:
-    p = e.get("pipeline") or {}
-    pid = "{}/{}/{}".format(p.get("org", ""), p.get("project", ""), p.get("identifier", ""))
-    print(fmt.format(e.get("alias") or "", e.get("trigger") or "", e.get("tech") or "", e.get("set") or "", pid))
-'
+  if [[ "$filtered" == "[]" ]]; then
+    print -- "(no matching entries)"
+    return 0
+  fi
+  print -- "$filtered" | hts_format_entries
 }

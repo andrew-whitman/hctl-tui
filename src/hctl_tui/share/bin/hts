@@ -19,44 +19,45 @@ source "$HTS_LIB/tui.sh"
 
 hts_usage() {
   /bin/cat <<'EOF'
-hts — Harness test-suite orchestration (hctl-tui)
+hts — Harness test-suite orchestration
 
 Usage:
-  hts                              Interactive TUI (TTY)
-  hts help                         Show this help
-  hts init [--profile NAME] [--skip-deps]   First-run: deps + config + hctl auth
-  hts doctor [--fix-deps]                   Show local config / install peer tools
-  hts run [options]                Fire or dry-run a matrix
-  hts profile list                 List hctl profiles
-  hts profile use NAME             Switch active hctl profile
-  hts profile init [NAME]          Create/update an hctl profile
-  hts matrix list [options]        List matrix entries
-  hts matrix add [options]         Add/update a matrix entry
-  hts matrix remove [options]      Remove a matrix entry by alias
+  hts
+      Interactive TUI (TTY)
+  hts help
+  hts init [--profile NAME] [--skip-deps]
+      First-run: deps + config + hctl auth
+  hts doctor [--fix-deps]
+      Show local config / install peer tools
+  hts run [options]
+      Fire or dry-run a matrix
+  hts profile list|use NAME|init [NAME]
+  hts matrix list|add|remove [options]
 
-Init installs peer tools when missing (prefer uv for hctl; brew/GitHub for gum).
+Init installs peer tools when missing
+(prefer uv for hctl; brew/GitHub for gum).
 Use --skip-deps to skip installs.
 
 Run options:
-  --module NAME        Matrix module (default from config)
-  --profile NAME       hctl profile
-  --tech NAME          Filter by tech
-  --set NAME           Filter by set
-  --alias A,B          Filter by alias (comma-separated)
-  --dry-run            Preview without POSTing
-  --no-open            Do not open uiUrls
-  --open               Open uiUrls even if config disables it
+  --module NAME     Matrix module (config default)
+  --profile NAME    hctl profile
+  --tech NAME       Filter by tech
+  --set NAME        Filter by set
+  --alias A,B       Filter by alias
+  --dry-run         Preview without POSTing
+  --no-open         Do not open uiUrls
+  --open            Open uiUrls anyway
 
 Matrix options (list/add/remove):
   --module NAME
   --profile NAME
-  --alias NAME                 (add/remove; required for remove)
-  --trigger ID                 (add; required)
-  --tech NAME                  (add; default: java)
-  --set NAME                   (add; default: shared)
-  --pipeline-org ORG           (add; required)
-  --pipeline-project PROJECT   (add; required)
-  --pipeline-id ID             (add; required)
+  --alias NAME              add/remove
+  --trigger ID              add (required)
+  --tech NAME               add (default: java)
+  --set NAME                add (default: shared)
+  --pipeline-org ORG        add (required)
+  --pipeline-project NAME   add (required)
+  --pipeline-id ID          add (required)
 EOF
 }
 
