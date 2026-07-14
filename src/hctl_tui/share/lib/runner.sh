@@ -195,10 +195,10 @@ hts_fire_custom_trigger() {
   return 0
 }
 
-# Resolve trigger inputYaml for pipeline execute.
+# Resolve trigger inputYaml / inputSetRefs for pipeline execute.
 # Args: trigger_json_file branch repo connector body_out_file
-# stdout: JSON {branch,repo,connector,has_body,warnings[]}
-# Writes resolved YAML body to body_out_file when present.
+# stdout: JSON {branch,repo,connector,has_body,input_set_refs,warnings[]}
+# Writes resolved YAML body to body_out_file when inputYaml is present.
 hts_resolve_trigger_input_yaml() {
   local trig_file="$1" branch="${2:-}" repo="${3:-}" connector="${4:-}" body_file="${5:-}"
   HTS_TRIG_FILE="$trig_file" HTS_BRANCH="$branch" HTS_REPO="$repo" \
@@ -220,15 +220,83 @@ trig_file = (os.environ.get("HTS_TRIG_FILE") or "").strip()
 warnings = []
 
 try:
-    with open(trig_file) as f:
-        raw = f.read()
+    with open(trig_file, "rb") as f:
+        raw_bytes = f.read()
 except Exception as e:
-    sys.stderr.write(f"cannot read get-trigger JSON: {e}\n")
+    sys.stderr.write(f"cannot read get-trigger response: {e}\n")
     sys.exit(1)
-try:
-    resp = json.loads(raw)
-except Exception as e:
-    sys.stderr.write(f"invalid get-trigger JSON: {e}\n")
+
+# Strip UTF-8 BOM / leading junk; decode leniently.
+if raw_bytes.startswith(b"\xef\xbb\xbf"):
+    raw_bytes = raw_bytes[3:]
+raw = raw_bytes.decode("utf-8", errors="replace").strip()
+# Drop any non-JSON preamble (banners, log lines) before first { or [
+for i, ch in enumerate(raw):
+    if ch in "{[":
+        raw = raw[i:]
+        break
+
+def repair_json_control_chars(s):
+    """Escape raw control chars inside JSON strings (Harness/hctl sometimes emit these)."""
+    out = []
+    in_string = False
+    escape = False
+    for ch in s:
+        o = ord(ch)
+        if not in_string:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+            continue
+        if escape:
+            out.append(ch)
+            escape = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escape = True
+            continue
+        if ch == '"':
+            in_string = False
+            out.append(ch)
+            continue
+        if o < 32:
+            if ch == "\n":
+                out.append("\\n")
+            elif ch == "\r":
+                out.append("\\r")
+            elif ch == "\t":
+                out.append("\\t")
+            else:
+                out.append("\\u%04x" % o)
+            continue
+        out.append(ch)
+    return "".join(out)
+
+def loads_trigger_payload(s):
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    try:
+        return json.loads(repair_json_control_chars(s))
+    except json.JSONDecodeError:
+        pass
+    # Some hctl builds return YAML (or YAML-wrapped) for this op
+    try:
+        loaded = yaml.safe_load(s)
+        if isinstance(loaded, (dict, list)):
+            return loaded
+    except Exception:
+        pass
+    return None
+
+resp = loads_trigger_payload(raw)
+if resp is None:
+    preview = raw[:240].replace("\n", "\\n")
+    sys.stderr.write(
+        "invalid get-trigger payload (not JSON/YAML). first bytes: %r\n" % (preview,)
+    )
     sys.exit(1)
 
 data = resp.get("data") if isinstance(resp, dict) else None
@@ -301,6 +369,44 @@ if not isinstance(input_yaml, str):
         input_yaml = yaml.safe_dump(input_yaml, default_flow_style=False, sort_keys=False)
     except Exception:
         input_yaml = str(input_yaml)
+input_yaml = input_yaml.strip()
+
+def normalize_input_set_refs(refs):
+    """Return comma-separated input set identifiers from trigger inputSetRefs."""
+    if refs is None:
+        return ""
+    if isinstance(refs, str):
+        s = refs.strip()
+        if not s or "<+" in s:
+            # expression-only refs can't be resolved without a webhook payload
+            if s and "<+" in s:
+                warnings.append("inputSetRefs is an expression; set input_set: on the matrix entry or use inline inputYaml")
+            return ""
+        # allow comma/space separated already
+        parts = [p.strip() for p in s.replace(";", ",").split(",") if p.strip()]
+        return ",".join(parts)
+    if isinstance(refs, (list, tuple)):
+        parts = []
+        for item in refs:
+            if item is None:
+                continue
+            if isinstance(item, dict):
+                # rare: {identifier: x} shapes
+                v = item.get("identifier") or item.get("name") or item.get("ref") or ""
+            else:
+                v = str(item).strip()
+            if v and "<+" not in v:
+                parts.append(v)
+            elif v and "<+" in v:
+                warnings.append("skipping expression inputSetRef: %s" % v)
+        return ",".join(parts)
+    return ""
+
+trigger_input_sets = normalize_input_set_refs(
+    trigger_obj.get("inputSetRefs")
+    if trigger_obj.get("inputSetRefs") is not None
+    else trigger_obj.get("input_set_refs")
+)
 
 EXPR_RE = re.compile(r"<\+\s*trigger\.([A-Za-z0-9_.'\[\]-]+)\s*>")
 
@@ -322,7 +428,7 @@ def expr_value(path):
         return ""
     return None
 
-def replace_exprs(text: str) -> str:
+def replace_exprs(text):
     def repl(m):
         path = m.group(1)
         val = expr_value(path)
@@ -398,6 +504,7 @@ out = {
     "repo": repo,
     "connector": connector,
     "has_body": has_body,
+    "input_set_refs": trigger_input_sets if not has_body else "",
     "warnings": warnings,
 }
 print(json.dumps(out))
@@ -507,6 +614,12 @@ hts_fire_pipeline_execute() {
       repo="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("repo") or "")')"
       connector="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("connector") or "")')"
       has_body="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(1 if json.load(sys.stdin).get("has_body") else 0)')"
+      # Fallback: trigger inputSetRefs when there is no inline inputYaml
+      local trigger_input_sets=""
+      trigger_input_sets="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("input_set_refs") or "")')"
+      if [[ -z "$input_set" && -n "$trigger_input_sets" ]]; then
+        input_set="$trigger_input_sets"
+      fi
       print -- "$resolved_meta" | hts_python -c '
 import json,sys
 for w in json.load(sys.stdin).get("warnings") or []:
@@ -517,6 +630,9 @@ for w in json.load(sys.stdin).get("warnings") or []:
       if [[ "$has_body" != "1" ]]; then
         hts_rm -f "$body_file"
         body_file=""
+        if [[ -z "$input_set" ]]; then
+          hts_log "warn: trigger=$trigger_id has no inputYaml or inputSetRefs — execute will use pipeline defaults only"
+        fi
       fi
     fi
   fi
@@ -534,7 +650,7 @@ for w in json.load(sys.stdin).get("warnings") or []:
   [[ -n "$branch" ]] && cmd+=(--branch "$branch")
   [[ -n "$repo" ]] && cmd+=(--repo-identifier "$repo")
   [[ -n "$connector" ]] && cmd+=(--query "connectorRef=$connector")
-  # Prefer resolved trigger body; only use input-set ids when no body.
+  # Prefer resolved trigger inputYaml body; else inputSetRefs / matrix input_set.
   if [[ -n "$body_file" ]]; then
     cmd+=(--content-type application/yaml --body "@${body_file}")
   elif [[ -n "$input_set" ]]; then
@@ -545,8 +661,14 @@ for w in json.load(sys.stdin).get("warnings") or []:
     print -u2 -- "DRY-RUN hctl pipeline-execute post-pipeline-execute-with-input-set-yaml"
     print -u2 -- "  profile=$profile account=$account"
     print -u2 -- "  org=$org project=$project pipeline=$pipeline_id"
-    [[ -n "$trigger_id" ]] && print -u2 -- "  trigger=$trigger_id (get-trigger → inputYaml)"
-    [[ -n "$input_set" && -z "$body_file" ]] && print -u2 -- "  inputSet=$input_set"
+    [[ -n "$trigger_id" ]] && print -u2 -- "  trigger=$trigger_id (get-trigger → inputYaml|inputSetRefs)"
+    if [[ -n "$body_file" ]]; then
+      print -u2 -- "  inputs=inputYaml (--body @file)"
+    elif [[ -n "$input_set" ]]; then
+      print -u2 -- "  inputs=inputSetRefs/input_set ($input_set)"
+    else
+      print -u2 -- "  inputs=(none)"
+    fi
     [[ -n "$branch" ]] && print -u2 -- "  branch=$branch" || print -u2 -- "  branch=(none — set for git-backed pipelines)"
     [[ -n "$repo" ]] && print -u2 -- "  repo=$repo"
     [[ -n "$connector" ]] && print -u2 -- "  connector=$connector"

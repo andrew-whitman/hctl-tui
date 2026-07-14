@@ -138,9 +138,8 @@ hts doctor
 3. For each matching entry:
    - `type: github` (default):
      1. `hctl triggers get-trigger` (org/project/`--target-identifier` pipeline + `--trigger-identifier`)
-     2. Extract `inputYaml`; replace `<+trigger.*>` using matrix `branch` / `repo` / `connector` (trigger source provides defaults for repo/connector)
-     3. Convert codebase build `type: PR` → `type: branch` with the resolved branch
-     4. `hctl pipeline-execute post-pipeline-execute-with-input-set-yaml` with `--body @file`, `--branch`, optional `--repo-identifier` / `connectorRef`
+     2. Prefer inline `inputYaml` (replace `<+trigger.*>`, convert PR build → branch); else fall back to `inputSetRefs` → `--input-set-identifiers` (matrix `input_set:` can override)
+     3. `hctl pipeline-execute post-pipeline-execute-with-input-set-yaml` with `--body @file` and/or `--input-set-identifiers`, plus `--branch`, optional `--repo-identifier` / `connectorRef`
    - `type: custom` → `POST /gateway/pipeline/api/webhook/custom/v2` with triggerIdentifier
 4. Collect success/fail; print a summary table.
 5. If `open_urls` / not `--no-open`, open returned `uiUrl`s (macOS `open`, Linux `xdg-open`).
