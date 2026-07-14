@@ -15,16 +15,13 @@ hts_tui_leave() {
 }
 
 hts_tui_clear() {
-  # Reset attrs, home cursor, erase screen + scrollback (where supported).
-  # Always target /dev/tty so leftovers on stdout don't coexist with the UI.
   {
     printf '\e[0m\e[H\e[2J\e[3J'
   } >/dev/tty 2>/dev/null || printf '\e[0m\e[H\e[2J\e[3J'
 }
 
 hts_tui_pause() {
-  # Brief acknowledgment before returning to a menu
-  local msg="${1:-Press Enter to continue}"
+  local msg="${1:-Press Enter}"
   print -- "" >/dev/tty 2>/dev/null || print -- ""
   gum input --placeholder "$msg" --value "" >/dev/null || true
 }
@@ -32,13 +29,12 @@ hts_tui_pause() {
 hts_gum_choose_height() {
   local r
   r="$(hts_term_rows)"
-  r=$(( r - 8 ))
-  (( r < 5 )) && r=5
-  (( r > 16 )) && r=16
+  r=$(( r - 6 ))
+  if (( r < 5 )); then r=5; fi
+  if (( r > 20 )); then r=20; fi
   print -- "$r"
 }
 
-# Keep stdout for the selection; give gum the real keyboard via /dev/tty.
 hts_gum_pick() {
   unsetopt xtrace verbose 2>/dev/null || true
   if [[ -r /dev/tty ]]; then
@@ -46,6 +42,76 @@ hts_gum_pick() {
   else
     gum choose "$@"
   fi
+}
+
+hts_gum_input() {
+  if [[ -r /dev/tty ]]; then
+    gum input "$@" </dev/tty
+  else
+    gum input "$@"
+  fi
+}
+
+# Active profile without an extra chooser. Only prompts when needed.
+hts_tui_profile() {
+  local names=() n active
+  while IFS= read -r n; do
+    [[ -n "$n" ]] && names+=("$n")
+  done < <(hts_profile_names)
+
+  if (( ${#names[@]} == 0 )); then
+    hts_tui_clear
+    hts_gum_box_warn "No hctl profiles — running hctl init…"
+    print -- "" >/dev/tty 2>/dev/null || print -- ""
+    hts_profile_init
+    hts_active_profile
+    return 0
+  fi
+
+  active="$(hts_active_profile)"
+  if [[ -n "$active" ]] && hts_hctl_profile_exists "$active"; then
+    print -- "$active"
+    return 0
+  fi
+  if (( ${#names[@]} == 1 )); then
+    print -- "${names[1]}"
+    return 0
+  fi
+
+  hts_tui_clear
+  hts_gum_pick \
+    --height="$(hts_gum_choose_height)" \
+    --header "Select hctl profile" \
+    "${names[@]}"
+}
+
+hts_tui_pick_module() {
+  local profile="$1" header="${2:-Module}"
+  local modules=() m
+  while IFS= read -r m; do
+    [[ -n "$m" ]] && modules+=("$m")
+  done < <(hts_list_modules "$profile")
+
+  if (( ${#modules[@]} == 0 )); then
+    return 1
+  fi
+  if (( ${#modules[@]} == 1 )); then
+    print -- "${modules[1]}"
+    return 0
+  fi
+
+  local def sel_args=()
+  def="$(hts_default_module)"
+  if [[ -n "$def" ]]; then
+    for m in "${modules[@]}"; do
+      if [[ "$m" == "$def" ]]; then
+        sel_args=(--selected "$def")
+        break
+      fi
+    done
+  fi
+  hts_gum_pick --height="$(hts_gum_choose_height)" --header "$header" \
+    "${sel_args[@]}" "${modules[@]}"
 }
 
 hts_tui_main() {
@@ -59,23 +125,28 @@ hts_tui_main() {
   while true; do
     unsetopt xtrace verbose 2>/dev/null || true
     hts_tui_clear
-    local choice=""
+    local choice="" active
+    active="$(hts_active_profile 2>/dev/null || print default)"
     choice="$(
       hts_gum_pick \
         --height="$(hts_gum_choose_height)" \
-        --header "Harness Test Suite Orchestration" \
+        --header "Harness Test Suite  ·  profile: ${active}" \
         "Run test suite" \
-        "Manage pipelines" \
-        "Manage profiles" \
+        "Add pipeline" \
+        "List pipelines" \
+        "Remove pipeline" \
+        "Profiles" \
         "Settings" \
         "Quit"
     )" || { hts_tui_leave; trap - EXIT INT TERM; return 0; }
 
     case "$choice" in
-      "Run test suite")     hts_tui_run_suite || true ;;
-      "Manage pipelines")   hts_tui_pipelines || true ;;
-      "Manage profiles")    hts_tui_profiles || true ;;
-      "Settings")           hts_tui_settings || true ;;
+      "Run test suite")   hts_tui_run_suite || true ;;
+      "Add pipeline")     hts_tui_matrix_add || true ;;
+      "List pipelines")   hts_tui_list_matrix || true ;;
+      "Remove pipeline")  hts_tui_remove_entry || true ;;
+      "Profiles")         hts_tui_profiles || true ;;
+      "Settings")         hts_tui_settings || true ;;
       "Quit"|*)
         hts_tui_leave
         trap - EXIT INT TERM
@@ -85,39 +156,10 @@ hts_tui_main() {
   done
 }
 
-hts_tui_pick_profile() {
-  local names=()
-  local n
-  while IFS= read -r n; do
-    [[ -n "$n" ]] && names+=("$n")
-  done < <(hts_profile_names)
-
-  hts_tui_clear
-  if (( ${#names[@]} == 0 )); then
-    hts_gum_box_error \
-      "No hctl profiles found" "Creating one via hctl init..."
-    print -- "" >/dev/tty 2>/dev/null || print -- ""
-    hts_profile_init
-    hts_active_profile
-    return 0
-  fi
-
-  local active
-  active="$(hts_active_profile)"
-  local picked
-  picked="$(
-    hts_gum_pick \
-      --height="$(hts_gum_choose_height)" \
-      --header "$(hts_trunc "Profile (active: $active)" "$(( $(hts_term_cols) - 4 ))")" \
-      "${names[@]}"
-  )" || return 1
-  print -- "$picked"
-}
-
 hts_tui_run_suite() {
-  local profile module tech set_ aliases dry_run=0 open_urls=0
+  local profile module tech="" set_="" aliases="" dry_run=0 open_urls=0 mode
 
-  profile="$(hts_tui_pick_profile)" || return 1
+  profile="$(hts_tui_profile)" || return 1
   hts_profile_use "$profile" >/dev/null
 
   local modules=()
@@ -128,41 +170,41 @@ hts_tui_run_suite() {
 
   if (( ${#modules[@]} == 0 )); then
     hts_tui_clear
-    hts_gum_box_warn \
-      "No matrices for profile '$profile'."
-    print -- "" >/dev/tty 2>/dev/null || print -- ""
-    if gum confirm "Create a matrix entry now?"; then
-      hts_tui_matrix_add "$profile"
-      modules=()
-      while IFS= read -r m; do
-        [[ -n "$m" ]] && modules+=("$m")
-      done < <(hts_list_modules "$profile")
-    else
-      return 0
+    if gum confirm "No pipelines yet. Add one now?"; then
+      hts_tui_matrix_add "$profile" || return 0
     fi
-  fi
-
-  (( ${#modules[@]} == 0 )) && return 0
-
-  hts_tui_clear
-  module="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 1
-
-  hts_tui_clear
-  if gum confirm --default=false "Filter by tech/set/alias?"; then
-    hts_tui_clear
-    tech="$(gum input --placeholder "tech (blank=any)")" || return 1
-    hts_tui_clear
-    set_="$(gum input --placeholder "set (blank=any)")" || return 1
-    hts_tui_clear
-    aliases="$(gum input --placeholder "aliases comma-separated (blank=any)")" || return 1
-  else
-    tech=""; set_=""; aliases=""
+    return 0
   fi
 
   hts_tui_clear
-  if gum confirm --default=false "Dry-run only?"; then
-    dry_run=1
-  fi
+  module="$(hts_tui_pick_module "$profile" "Run · module")" || return 1
+
+  hts_tui_clear
+  mode="$(
+    hts_gum_pick \
+      --height="$(hts_gum_choose_height)" \
+      --header "Run $module ($profile)" \
+      "Run" \
+      "Dry-run" \
+      "Filter then run" \
+      "Cancel"
+  )" || return 0
+
+  case "$mode" in
+    Cancel) return 0 ;;
+    Dry-run) dry_run=1 ;;
+    "Filter then run")
+      hts_tui_clear
+      tech="$(hts_gum_input --placeholder "tech (blank=any)")" || return 0
+      set_="$(hts_gum_input --placeholder "set (blank=any)")" || return 0
+      aliases="$(hts_gum_input --placeholder "aliases comma-separated (blank=any)")" || return 0
+      hts_tui_clear
+      if gum confirm --default=false "Dry-run only?"; then
+        dry_run=1
+      fi
+      ;;
+    Run) dry_run=0 ;;
+  esac
 
   if hts_open_urls_enabled && [[ "$dry_run" != "1" ]]; then
     open_urls=1
@@ -170,285 +212,250 @@ hts_tui_run_suite() {
 
   hts_tui_clear
   {
-    local tw
-    tw="$(hts_term_cols)"
-    print -- "$(hts_trunc "Preview - profile=$profile module=$module" "$tw")"
-    [[ -n "$tech" ]] && print -- "$(hts_trunc "tech=$tech" "$tw")"
-    [[ -n "$set_" ]] && print -- "$(hts_trunc "set=$set_" "$tw")"
-    [[ -n "$aliases" ]] && print -- "$(hts_trunc "alias=$aliases" "$tw")"
+    print -- "profile=$profile  module=$module"
+    [[ -n "$tech" ]] && print -- "tech=$tech"
+    [[ -n "$set_" ]] && print -- "set=$set_"
+    [[ -n "$aliases" ]] && print -- "alias=$aliases"
     (( dry_run )) && print -- "mode=dry-run"
     print -- ""
     hts_preview_matrix "$profile" "$module" "$tech" "$set_" "$aliases"
   } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
-  gum confirm "Run this?" || return 0
+  gum confirm "Continue?" || return 0
 
   hts_tui_clear
   hts_run_matrix "$profile" "$module" "$tech" "$set_" "$aliases" "$dry_run" "$open_urls"
-  hts_tui_pause "Press Enter to return to menu"
+  hts_tui_pause "Enter — back to menu"
 }
 
-hts_tui_profiles() {
-  hts_tui_clear
-  local action
-  action="$(
-    hts_gum_pick \
-      --height="$(hts_gum_choose_height)" \
-      --header "Manage profiles" \
-      "List profiles" \
-      "Switch active profile" \
-      "Init / create profile (hctl)" \
-      "Doctor" \
-      "Back"
-  )" || return 0
+hts_tui_parse_entry_form() {
+  # stdin: key: value form → prints TSV:
+  # module type alias trigger tech set org project pipeline branch
+  local raw
+  raw="$(/bin/cat)"
+  HTS_FORM_INPUT="$raw" hts_python - <<'PY'
+import os
+raw = os.environ.get("HTS_FORM_INPUT") or ""
+data = {}
+for line in raw.splitlines():
+    s = line.strip()
+    if not s or s.startswith("#") or ":" not in s:
+        continue
+    k, v = s.split(":", 1)
+    data[k.strip().lower()] = v.strip()
 
-  case "$action" in
-    "List profiles")
-      hts_tui_clear
-      hts_profile_list 2>/dev/null | hts_tui_show
-      hts_tui_pause
-      ;;
-    "Switch active profile")
-      local p
-      p="$(hts_tui_pick_profile)" || return 0
-      hts_profile_use "$p"
-      hts_tui_clear
-      hts_gum_box "Active profile: $p"
-      hts_tui_pause
-      ;;
-    "Init / create profile (hctl)")
-      hts_tui_clear
-      local name
-      name="$(gum input --placeholder "profile name (blank=default flow)")" || return 0
-      hts_profile_init "${name:-}"
-      hts_tui_pause
-      ;;
-    "Doctor")
-      hts_tui_clear
-      hts_profile_doctor | gum pager
-      ;;
-    *) return 0 ;;
-  esac
-}
+def g(*keys, default=""):
+    for k in keys:
+        if data.get(k):
+            return data[k]
+    return default
 
-hts_tui_matrix_progress() {
-  # Render progress card only (caller clears the screen first).
-  # Args: profile module alias trigger tech set org project identifier [type]
-  local profile="$1" module="$2" alias="$3" trigger="$4" tech="$5" set_="$6" org="$7" project="$8" identifier="$9"
-  local etype="${10:-}"
-  local line filled pending tw vw
+etype = g("type", default="github").lower()
+if etype in ("webhook", "custom_webhook"):
+    etype = "custom"
+if etype not in ("github", "custom"):
+    etype = "github"
 
-  tw="$(hts_term_cols)"
-  vw=$(( tw - 16 ))
-  if (( vw < 12 )); then
-    vw=12
-  fi
-
-  filled=()
-  pending=()
-  if [[ -n "$module" ]]; then filled+=("module:     $(hts_trunc "$module" "$vw")"); else pending+=("module"); fi
-  if [[ -n "$etype" ]]; then filled+=("type:       $(hts_trunc "$etype" "$vw")"); else pending+=("type"); fi
-  if [[ -n "$alias" ]]; then filled+=("alias:      $(hts_trunc "$alias" "$vw")"); else pending+=("alias"); fi
-  if [[ "$etype" == "custom" ]]; then
-    if [[ -n "$trigger" ]]; then filled+=("trigger:    $(hts_trunc "$trigger" "$vw")"); else pending+=("trigger"); fi
-  elif [[ -n "$etype" ]]; then
-    if [[ -n "$trigger" ]]; then filled+=("input_set:  $(hts_trunc "$trigger" "$vw")"); else filled+=("input_set:  (none)"); fi
-  fi
-  if [[ -n "$tech" ]]; then filled+=("tech:       $(hts_trunc "$tech" "$vw")"); else pending+=("tech"); fi
-  if [[ -n "$set_" ]]; then filled+=("set:        $(hts_trunc "$set_" "$vw")"); else pending+=("set"); fi
-  if [[ -n "$org" ]]; then filled+=("org:        $(hts_trunc "$org" "$vw")"); else pending+=("org"); fi
-  if [[ -n "$project" ]]; then filled+=("project:    $(hts_trunc "$project" "$vw")"); else pending+=("project"); fi
-  if [[ -n "$identifier" ]]; then filled+=("pipeline:   $(hts_trunc "$identifier" "$vw")"); else pending+=("pipeline"); fi
-
-  {
-    print -- "New matrix entry"
-    print -- "profile: $(hts_trunc "$profile" "$vw")"
-    print -- ""
-    if (( ${#filled[@]} )); then
-      print -- "Entered:"
-      for line in "${filled[@]}"; do
-        print -- "  * $line"
-      done
-    else
-      print -- "Entered: (none yet)"
-    fi
-    if (( ${#pending[@]} )); then
-      print -- ""
-      print -- "Still needed: $(hts_trunc "${(j:, :)pending}" "$vw")"
-    else
-      print -- ""
-      print -- "All fields complete - confirm to save."
-    fi
-  } | hts_tui_show
-  print -- "" >/dev/tty 2>/dev/null || print -- ""
-}
-
-hts_tui_matrix_prompt() {
-  # Clear, show progress, ask one field.
-  # usage: hts_tui_matrix_prompt [--optional] <var_name> <placeholder> \
-  #          profile module alias trigger tech set org project identifier [type]
-  local __optional=0
-  if [[ "${1:-}" == "--optional" ]]; then
-    __optional=1
-    shift
-  fi
-  local __var="$1" __ph="$2"
-  shift 2
-  hts_tui_clear
-  hts_tui_matrix_progress "$@"
-  local __val=""
-  __val="$(gum input --placeholder "$__ph")" || return 1
-  if [[ -z "$__val" && "$__optional" != "1" ]]; then
-    hts_tui_clear
-    hts_gum_box_error "${__var} is required."
-    hts_tui_pause
-    return 1
-  fi
-  eval "${__var}=${(q)__val}"
+vals = [
+    g("module", default="ci"),
+    etype,
+    g("alias"),
+    g("trigger", "input_set", "inputset"),
+    g("tech", default="java"),
+    g("set", default="shared"),
+    g("org", "pipeline.org"),
+    g("project", "pipeline.project"),
+    g("pipeline", "pipeline_id", "identifier", "pipeline.identifier"),
+    g("branch"),
+]
+print("\t".join(vals))
+PY
 }
 
 hts_tui_matrix_add() {
-  local profile="${1:-$(hts_active_profile)}"
-  local module="" alias="" trigger="" tech="" set_="" org="" project="" identifier="" etype=""
-
-  hts_tui_matrix_prompt module "module (e.g. ci, cd)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
-
-  hts_tui_clear
-  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype"
-  etype="$(
-    hts_gum_pick \
-      --height="$(hts_gum_choose_height)" \
-      --header "How should hts fire this pipeline?" \
-      "github - execute pipeline (GitHub / ad-hoc runs)" \
-      "custom - Harness custom webhook trigger"
-  )" || return 1
-  case "$etype" in
-    custom*) etype="custom" ;;
-    *) etype="github" ;;
-  esac
-
-  hts_tui_matrix_prompt alias "alias (short name for this matrix entry)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
-  if [[ "$etype" == "custom" ]]; then
-    hts_tui_matrix_prompt trigger "custom trigger identifier (required)" \
-      "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
-  else
-    hts_tui_matrix_prompt --optional trigger "optional input set id (blank=none)" \
-      "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
+  local profile="${1:-}"
+  if [[ -z "$profile" ]]; then
+    profile="$(hts_tui_profile)" || return 1
   fi
-  hts_tui_matrix_prompt tech "tech (e.g. java, go, python)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
-  hts_tui_matrix_prompt set_ "set (e.g. shared, exclusive)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
-  hts_tui_matrix_prompt org "pipeline org (Harness orgIdentifier)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
-  hts_tui_matrix_prompt project "pipeline project (Harness projectIdentifier)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
-  hts_tui_matrix_prompt identifier "pipeline identifier (Harness pipelineIdentifier)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
+  hts_profile_use "$profile" >/dev/null
+
+  local def_mod form module etype alias trigger tech set_ org project identifier branch
+  def_mod="$(hts_default_module)"
 
   hts_tui_clear
-  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype"
-  gum confirm "Save this matrix entry?" || return 0
+  form="$(
+    gum write \
+      --header "Add pipeline  ·  profile ${profile}  ·  Ctrl+D to save, Esc cancel" \
+      --height 16 \
+      --value "$(/bin/cat <<EOF
+module: ${def_mod}
+type: github
+alias: 
+tech: java
+set: shared
+org: 
+project: 
+pipeline: 
+trigger: 
+branch: 
+EOF
+)"
+  )" || return 0
 
-  hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" >/dev/null
+  local parsed
+  parsed="$(print -- "$form" | hts_tui_parse_entry_form)"
+  IFS=$'\t' read -r module etype alias trigger tech set_ org project identifier branch <<<"$parsed"
+
+  if [[ -z "$alias" || -z "$org" || -z "$project" || -z "$identifier" ]]; then
+    hts_tui_clear
+    hts_gum_box_error "Need alias, org, project, and pipeline."
+    hts_tui_pause
+    return 1
+  fi
+  if [[ "$etype" == "custom" && -z "$trigger" ]]; then
+    hts_tui_clear
+    hts_gum_box_error "type=custom requires trigger."
+    hts_tui_pause
+    return 1
+  fi
+
+  hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" "$branch" >/dev/null
+  hts_cfg_set_str '.defaults.module' "$module" >/dev/null 2>&1 || true
   hts_tui_clear
-  local path_show
-  path_show="$(hts_trunc "matrices/$profile/$module.yaml" "$(( $(hts_term_cols) - 8 ))")"
-  hts_gum_box \
-    "$(hts_trunc "Saved $alias ($etype)" "$(( $(hts_term_cols) - 8 ))")" "$path_show"
-  hts_tui_pause
+  hts_gum_box "Saved $alias" "type=$etype  module=$module"
+  # brief pause only so the confirmation is readable
+  hts_tui_pause "Enter — done"
 }
 
-hts_tui_pipelines() {
-  local profile
-  profile="$(hts_tui_pick_profile)" || return 1
+hts_tui_list_matrix() {
+  local profile module
+  profile="$(hts_tui_profile)" || return 1
   hts_profile_use "$profile" >/dev/null
 
   hts_tui_clear
-  local action
-  action="$(
-    hts_gum_pick \
-      --height="$(hts_gum_choose_height)" \
-      --header "Manage pipelines (profile: $(hts_trunc "$profile" 24))" \
-      "List matrix" \
-      "Add / update entry" \
-      "Remove entry" \
-      "Back"
-  )" || return 0
+  module="$(hts_tui_pick_module "$profile" "List · module")" || {
+    hts_gum_box "No pipelines yet."
+    hts_tui_pause
+    return 0
+  }
+  hts_tui_clear
+  hts_matrix_list "$profile" "$module" 2>/dev/null | hts_tui_show
+  hts_tui_pause
+}
 
-  case "$action" in
-    "List matrix")
-      local modules=() m module
-      while IFS= read -r m; do [[ -n "$m" ]] && modules+=("$m"); done < <(hts_list_modules "$profile")
-      hts_tui_clear
-      if (( ${#modules[@]} == 0 )); then
-        hts_gum_box "No matrices yet."
+hts_tui_remove_entry() {
+  local profile module alias aliases=() a
+  profile="$(hts_tui_profile)" || return 1
+  hts_profile_use "$profile" >/dev/null
+
+  hts_tui_clear
+  module="$(hts_tui_pick_module "$profile" "Remove · module")" || {
+    hts_gum_box "No pipelines yet."
+    hts_tui_pause
+    return 0
+  }
+
+  while IFS= read -r a; do
+    [[ -n "$a" ]] && aliases+=("$a")
+  done < <(
+    hts_matrix_entries_json "$profile" "$module" | hts_python -c '
+import json,sys
+for e in json.load(sys.stdin):
+    al=e.get("alias") or ""
+    if al: print(al)
+'
+  )
+
+  if (( ${#aliases[@]} == 0 )); then
+    hts_tui_clear
+    hts_gum_box "Matrix is empty."
+    hts_tui_pause
+    return 0
+  fi
+
+  hts_tui_clear
+  alias="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Remove alias" "${aliases[@]}")" || return 0
+  gum confirm "Delete '$alias'?" || return 0
+  hts_matrix_remove "$profile" "$module" "$alias" >/dev/null
+  hts_tui_clear
+  hts_gum_box "Removed: $alias"
+  hts_tui_pause
+}
+
+hts_tui_profiles() {
+  while true; do
+    hts_tui_clear
+    local action active
+    active="$(hts_active_profile 2>/dev/null || print -)"
+    action="$(
+      hts_gum_pick \
+        --height="$(hts_gum_choose_height)" \
+        --header "Profiles  ·  active: ${active}" \
+        "Switch profile" \
+        "List profiles" \
+        "Init / create (hctl)" \
+        "Doctor" \
+        "Back"
+    )" || return 0
+
+    case "$action" in
+      "Switch profile")
+        local names=() n p
+        while IFS= read -r n; do [[ -n "$n" ]] && names+=("$n"); done < <(hts_profile_names)
+        (( ${#names[@]} )) || { hts_gum_box_error "No profiles."; hts_tui_pause; continue; }
+        hts_tui_clear
+        p="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Switch to" --selected "$active" "${names[@]}")" || continue
+        hts_profile_use "$p" >/dev/null
+        ;;
+      "List profiles")
+        hts_tui_clear
+        hts_profile_list 2>/dev/null | hts_tui_show
         hts_tui_pause
-        return 0
-      fi
-      module="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 0
-      hts_tui_clear
-      hts_matrix_list "$profile" "$module" 2>/dev/null | hts_tui_show
-      hts_tui_pause
-      ;;
-    "Add / update entry")
-      hts_tui_matrix_add "$profile"
-      ;;
-    "Remove entry")
-      local modules=() m module alias
-      while IFS= read -r m; do [[ -n "$m" ]] && modules+=("$m"); done < <(hts_list_modules "$profile")
-      hts_tui_clear
-      (( ${#modules[@]} == 0 )) && {
-        hts_gum_box "No matrices."
+        ;;
+      "Init / create (hctl)")
+        hts_tui_clear
+        local name
+        name="$(hts_gum_input --placeholder "profile name (blank=default flow)")" || continue
+        hts_profile_init "${name:-}"
         hts_tui_pause
-        return 0
-      }
-      module="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 0
-      hts_tui_clear
-      alias="$(gum input --placeholder "alias to remove")" || return 0
-      hts_matrix_remove "$profile" "$module" "$alias"
-      hts_tui_clear
-      hts_gum_box "Removed: $alias"
-      hts_tui_pause
-      ;;
-    *) return 0 ;;
-  esac
+        ;;
+      "Doctor")
+        hts_tui_clear
+        hts_profile_doctor | gum pager
+        ;;
+      Back|*) return 0 ;;
+    esac
+  done
 }
 
 hts_tui_settings() {
-  hts_tui_clear
-  local action
-  action="$(
-    hts_gum_pick \
-      --height="$(hts_gum_choose_height)" \
-      --header "Settings" \
-      "Set default module" \
-      "Toggle open_urls" \
-      "Back"
-  )" || return 0
+  while true; do
+    hts_tui_clear
+    local action mod urls
+    mod="$(hts_default_module)"
+    if hts_open_urls_enabled; then urls=on; else urls=off; fi
+    action="$(
+      hts_gum_pick \
+        --height="$(hts_gum_choose_height)" \
+        --header "Settings  ·  module=${mod}  open_urls=${urls}" \
+        "Set default module" \
+        "Toggle open_urls" \
+        "Back"
+    )" || return 0
 
-  case "$action" in
-    "Set default module")
-      hts_tui_clear
-      local mod
-      mod="$(gum input --placeholder "default module (currently: $(hts_default_module))")" || return 0
-      [[ -n "$mod" ]] || return 0
-      hts_cfg_set_str '.defaults.module' "$mod"
-      hts_tui_clear
-      hts_gum_box "default module: $mod"
-      hts_tui_pause
-      ;;
-    "Toggle open_urls")
-      local cur new
-      if hts_open_urls_enabled; then cur=true; else cur=false; fi
-      if [[ "$cur" == "true" ]]; then new=false; else new=true; fi
-      hts_cfg_set_str '.defaults.open_urls' "$new"
-      hts_tui_clear
-      hts_gum_box "open_urls: $new"
-      hts_tui_pause
-      ;;
-    *) return 0 ;;
-  esac
+    case "$action" in
+      "Set default module")
+        hts_tui_clear
+        mod="$(hts_gum_input --value "$mod" --placeholder "default module")" || continue
+        [[ -n "$mod" ]] || continue
+        hts_cfg_set_str '.defaults.module' "$mod"
+        ;;
+      "Toggle open_urls")
+        local new
+        if hts_open_urls_enabled; then new=false; else new=true; fi
+        hts_cfg_set_str '.defaults.open_urls' "$new"
+        ;;
+      Back|*) return 0 ;;
+    esac
+  done
 }

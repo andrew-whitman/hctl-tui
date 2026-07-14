@@ -98,44 +98,12 @@ entries: []
 
 ## TUI flow
 
-```
-$ hts
+Flat home menu (active hctl profile used by default — no per-action picker):
 
-hctl-tui
-- Run test suite
-- Manage pipelines
-- Manage profiles
-- Settings
-- Quit
-
--> Run test suite
-
-  Profile: (from hctl) default
-  Module: ci, cd, ...
-  Filter tech / set / alias (optional, multi-select or skip)
-  Dry-run? [y/N]
-
-  Preview box of matching entries
-
-  Run this? [Y/n]
-```
-
-### Manage profiles
-
-- List hctl profiles
-- Switch active profile (updates `active_hctl_profile` and `hctl config profile use`)
-- Create / edit via gum prompts → `hctl init --non-interactive …`
-- Doctor → `hctl doctor`
-
-### Manage pipelines
-
-- Pick module (or create new matrix file)
-- Add / edit / remove matrix entries for `matrices/<active_profile>/<module>.yaml`
-
-### Settings
-
-- Default module
-- Open URLs after trigger (`open_urls`)
+- Run test suite → module (skipped if one) → Run / Dry-run / Filter then run
+- Add pipeline → single gum write form (Ctrl+D save)
+- List pipelines / Remove pipeline (alias chooser)
+- Profiles / Settings (looping submenus)
 
 ## CLI (non-interactive)
 
