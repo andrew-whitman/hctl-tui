@@ -103,8 +103,8 @@ $ hts
 
 hctl-tui
 - Run test suite
-- Manage profiles
 - Manage pipelines
+- Manage profiles
 - Settings
 - Quit
 

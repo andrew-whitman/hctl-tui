@@ -65,16 +65,16 @@ hts_tui_main() {
         --height="$(hts_gum_choose_height)" \
         --header "Harness Test Suite Orchestration" \
         "Run test suite" \
-        "Manage profiles" \
         "Manage pipelines" \
+        "Manage profiles" \
         "Settings" \
         "Quit"
     )" || { hts_tui_leave; trap - EXIT INT TERM; return 0; }
 
     case "$choice" in
       "Run test suite")     hts_tui_run_suite || true ;;
-      "Manage profiles")    hts_tui_profiles || true ;;
       "Manage pipelines")   hts_tui_pipelines || true ;;
+      "Manage profiles")    hts_tui_profiles || true ;;
       "Settings")           hts_tui_settings || true ;;
       "Quit"|*)
         hts_tui_leave
