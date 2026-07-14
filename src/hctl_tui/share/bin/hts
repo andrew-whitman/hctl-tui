@@ -1,0 +1,256 @@
+#!/usr/bin/env zsh
+# hts — hctl-tui entrypoint
+emulate -L zsh
+set -euo pipefail
+
+# Ensure a sane PATH (some environments start nearly empty)
+export PATH="${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
+
+# HTS_ROOT / HTS_LIB may be injected by the Python uv entrypoint or local bin/hts.
+: "${HTS_ROOT:=$(cd -- "${0:A:h}/.." && pwd)}"
+: "${HTS_LIB:=$HTS_ROOT/lib}"
+
+source "$HTS_LIB/core.sh"
+source "$HTS_LIB/profiles.sh"
+source "$HTS_LIB/pipelines.sh"
+source "$HTS_LIB/runner.sh"
+source "$HTS_LIB/tui.sh"
+
+hts_usage() {
+  cat <<'EOF'
+hts — Harness test-suite orchestration (hctl-tui)
+
+Usage:
+  hts                          Interactive TUI
+  hts init [--profile NAME]    First-run setup (hctl auth + hts config)
+  hts run [options]            Fire (or dry-run) a matrix
+  hts profile list|use|init
+  hts matrix list|add|remove
+  hts doctor
+  hts help
+
+Run options:
+  --module NAME        Matrix module (default from config)
+  --profile NAME       hctl profile
+  --tech NAME          Filter by tech
+  --set NAME           Filter by set
+  --alias A,B          Filter by alias (comma-separated)
+  --dry-run            Preview without POSTing
+  --no-open            Do not open uiUrls
+  --open               Open uiUrls even if config disables it
+
+Matrix add options:
+  --module --alias --trigger --tech --set
+  --pipeline-org --pipeline-project --pipeline-id
+  [--profile]
+EOF
+}
+
+hts_cmd_init() {
+  local name=""
+  while (( $# )); do
+    case "$1" in
+      --profile|--name) name="$2"; shift 2 ;;
+      -h|--help)
+        print -- "usage: hts init [--profile NAME]"
+        print -- "  Writes ~/.config/hctl-tui, seeds a sample matrix, then runs hctl init."
+        return 0
+        ;;
+      *)
+        # bare profile name: hts init sandbox
+        if [[ -z "$name" && "$1" != --* ]]; then
+          name="$1"; shift
+        else
+          hts_die "unknown option: $1 (try: hts init --help)"
+          return 1
+        fi
+        ;;
+    esac
+  done
+
+  hts_log "bootstrapping hctl-tui config…"
+  hts_ensure_config
+
+  local profile_for_seed example
+  profile_for_seed="${name:-default}"
+  example="$(hts_matrix_path "$profile_for_seed" "$(hts_default_module)")"
+  if [[ ! -f "$example" ]]; then
+    /bin/mkdir -p "${example:h}"
+    local src="$HTS_ROOT/matrices.example.yaml"
+    if [[ -f "$src" ]]; then
+      /bin/cp "$src" "$example"
+    else
+      cat >"$example" <<'EOF'
+module: ci
+entries: []
+EOF
+    fi
+    hts_log "seeded matrix: $example (edit triggers before running for real)"
+  fi
+
+  if ! hts_have hctl; then
+    hts_err "hctl is not installed (required for Harness auth)"
+    hts_err "install it, then re-run: hts init"
+    hts_err "  uv tool install git+https://github.com/ianmatson/harness-cli.git"
+    hts_err "  # or: brew tap imatson9119/tap && brew install hctl"
+    return 1
+  fi
+
+  hts_profile_init "$name"
+  hts_log "done. Next: edit matrices under $HTS_MATRICES_DIR, then: hts"
+}
+
+hts_cmd_run() {
+  local profile="" module="" tech="" set_="" aliases=""
+  local dry_run=0 open_urls=-1
+
+  while (( $# )); do
+    case "$1" in
+      --profile) profile="$2"; shift 2 ;;
+      --module)  module="$2"; shift 2 ;;
+      --tech)    tech="$2"; shift 2 ;;
+      --set)     set_="$2"; shift 2 ;;
+      --alias)   aliases="$2"; shift 2 ;;
+      --dry-run) dry_run=1; shift ;;
+      --no-open) open_urls=0; shift ;;
+      --open)    open_urls=1; shift ;;
+      -h|--help) hts_usage; return 0 ;;
+      *) hts_die "unknown option: $1"; return 1 ;;
+    esac
+  done
+
+  hts_require_deps matrix || return 1
+  hts_ensure_config
+
+  profile="$(hts_resolve_profile "$profile")"
+  module="${module:-$(hts_default_module)}"
+
+  if (( open_urls < 0 )); then
+    if hts_open_urls_enabled; then open_urls=1; else open_urls=0; fi
+  fi
+  if (( dry_run )); then
+    open_urls=0
+  fi
+
+  if (( ! dry_run )); then
+    hts_require_deps run || return 1
+  fi
+
+  hts_run_matrix "$profile" "$module" "$tech" "$set_" "$aliases" "$dry_run" "$open_urls"
+}
+
+hts_cmd_profile() {
+  local sub="${1:-list}"
+  if (( $# > 0 )); then
+    shift
+  fi
+  case "$sub" in
+    list) hts_profile_list "$@" ;;
+    use)
+      [[ -n "${1:-}" ]] || { hts_die "usage: hts profile use NAME"; return 1; }
+      hts_profile_use "$1"
+      ;;
+    init)
+      local name=""
+      if [[ "${1:-}" == "--name" || "${1:-}" == "--profile" ]]; then name="${2:-}"; fi
+      if [[ -n "${1:-}" && "${1:-}" != "--name" && "${1:-}" != "--profile" ]]; then name="$1"; fi
+      hts_profile_init "$name"
+      ;;
+    *) hts_die "usage: hts profile list|use|init"; return 1 ;;
+  esac
+}
+
+hts_cmd_matrix() {
+  local sub="${1:-list}"
+  shift || true
+
+  local profile="" module="" alias="" trigger="" tech="" set_=""
+  local org="" project="" identifier=""
+
+  # parse remaining flags (shared)
+  local -a rest=()
+  while (( $# )); do
+    case "$1" in
+      --profile) profile="$2"; shift 2 ;;
+      --module)  module="$2"; shift 2 ;;
+      --alias)   alias="$2"; shift 2 ;;
+      --trigger) trigger="$2"; shift 2 ;;
+      --tech)    tech="$2"; shift 2 ;;
+      --set)     set_="$2"; shift 2 ;;
+      --pipeline-org) org="$2"; shift 2 ;;
+      --pipeline-project) project="$2"; shift 2 ;;
+      --pipeline-id) identifier="$2"; shift 2 ;;
+      *) rest+=("$1"); shift ;;
+    esac
+  done
+
+  hts_ensure_config
+  profile="$(hts_resolve_profile "$profile")"
+  module="${module:-$(hts_default_module)}"
+
+  case "$sub" in
+    list)
+      hts_matrix_list "$profile" "$module"
+      ;;
+    add)
+      [[ -n "$alias" && -n "$trigger" && -n "$org" && -n "$project" && -n "$identifier" ]] \
+        || { hts_die "matrix add requires --alias --trigger --pipeline-org --pipeline-project --pipeline-id"; return 1; }
+      tech="${tech:-java}"
+      set_="${set_:-shared}"
+      hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
+      ;;
+    remove|rm)
+      [[ -n "$alias" ]] || { hts_die "matrix remove requires --alias"; return 1; }
+      hts_matrix_remove "$profile" "$module" "$alias"
+      ;;
+    *) hts_die "usage: hts matrix list|add|remove"; return 1 ;;
+  esac
+}
+
+hts_cmd_doctor() {
+  hts_require_deps any || return 1
+  hts_ensure_config
+  print -- "hts config: $HTS_CONFIG_FILE"
+  print -- "active profile: $(hts_active_profile)"
+  print -- "default module: $(hts_default_module)"
+  print -- "open_urls: $(hts_open_urls_enabled && print true || print false)"
+  print -- ""
+  if hts_have hctl; then
+    hts_profile_doctor "$@"
+  else
+    hts_log "hctl not installed — skipping hctl doctor"
+  fi
+}
+
+main() {
+  local cmd="${1:-}"
+  if [[ -z "$cmd" ]]; then
+    if [[ -t 0 && -t 1 ]]; then
+      hts_tui_main
+      return $?
+    else
+      hts_usage
+      return 1
+    fi
+  fi
+  shift || true
+  case "$cmd" in
+    init)    hts_cmd_init "$@" ;;
+    run)     hts_cmd_run "$@" ;;
+    profile) hts_cmd_profile "$@" ;;
+    matrix)  hts_cmd_matrix "$@" ;;
+    doctor)  hts_cmd_doctor "$@" ;;
+    help|-h|--help) hts_usage ;;
+    *)
+      # Allow `hts --module ci` as shorthand for run
+      if [[ "$cmd" == --* ]]; then
+        hts_cmd_run "$cmd" "$@"
+      else
+        hts_die "unknown command: $cmd (try: hts help)"
+        return 1
+      fi
+      ;;
+  esac
+}
+
+main "$@"

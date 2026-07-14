@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hctl-tui"
+version = "0.1.0"
+description = "TUI/CLI orchestration for Harness custom webhook test matrices (via hctl)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [{ name = "Andrew Whitman" }]
+keywords = ["harness", "hctl", "tui", "ci", "gum"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Build Tools",
+]
+dependencies = [
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "ruff>=0.4",
+]
+
+[project.scripts]
+hts = "hctl_tui.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/andrew-whitman/hctl-tui"
+Repository = "https://github.com/andrew-whitman/hctl-tui"
+Issues = "https://github.com/andrew-whitman/hctl-tui/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hctl_tui = [
+  "share/bin/hts",
+  "share/lib/*.sh",
+  "share/matrices.example.yaml",
+  "share/config.example.yaml",
+]
+
+[tool.setuptools]
+zip-safe = false

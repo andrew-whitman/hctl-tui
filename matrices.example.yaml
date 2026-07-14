@@ -1,0 +1,18 @@
+# Example matrix template.
+# Live files: ~/.config/hctl-tui/matrices/<hctl-profile>/<module>.yaml
+#
+# Fill in your Harness identifiers. Do not commit real API keys here
+# (auth belongs in ~/.config/hctl via `hts init` / `hctl init`).
+
+module: ci
+entries: []
+# Example entry shape (uncomment and edit):
+# entries:
+#   - alias: my-alias
+#     trigger: MY_TRIGGER_ID
+#     tech: java
+#     set: shared
+#     pipeline:
+#       org: YOUR_ORG
+#       project: YOUR_PROJECT
+#       identifier: YOUR_PIPELINE_ID

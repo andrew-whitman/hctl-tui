@@ -1,0 +1,7 @@
+# Copy to ~/.config/hctl-tui/config.yaml (setup.sh does this).
+# Auth lives in hctl (~/.config/hctl/config.json) — nothing secret here.
+
+active_hctl_profile: default
+defaults:
+  module: ci
+  open_urls: true

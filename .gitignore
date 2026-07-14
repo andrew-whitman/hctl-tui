@@ -1,0 +1,19 @@
+dist/
+build/
+*.egg-info/
+src/*.egg-info/
+.hctl_tui.egg-info/
+*.egg
+__pycache__/
+*.py[cod]
+.Python
+.tmp-config/
+.venv/
+
+# Never commit Harness/hctl secrets or live matrices
+.env
+.env.*
+**/hctl/config.json
+.hctl/
+*.pem
+*credentials*
