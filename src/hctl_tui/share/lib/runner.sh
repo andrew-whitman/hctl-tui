@@ -362,7 +362,7 @@ hts_run_matrix() {
   while IFS=$'\t' read -r alias etype trigger org project pid branch; do
     [[ -n "$alias" ]] || continue
     etype="$(hts_entry_type "$etype")"
-    hts_log "→ $alias  type=$etype  pipeline=$org/$project/$pid  trigger/inputSet=${trigger:-(-)}"
+    hts_log "→ $alias  type=$etype  org=$org project=$project pipeline=$pid branch=${branch:-(-)} trigger/inputSet=${trigger:-(-)}"
     fire_ec=0
     resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "$dry_run" "$branch")" || fire_ec=$?
     if [[ "$dry_run" == "1" ]]; then

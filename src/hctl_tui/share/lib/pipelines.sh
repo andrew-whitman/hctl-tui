@@ -54,22 +54,42 @@ PY
 hts_matrix_add() {
   # optional 10th arg: type (github|custom), default github
   # optional 11th arg: branch (for git-backed pipelines)
+  # Values are passed to Python via env vars (not argv) to avoid positional drift.
   local profile="$1" module="$2"
   local alias="$3" trigger="$4" tech="$5" set_="$6"
   local org="$7" project="$8" identifier="$9"
   local etype="${10:-github}" branch="${11:-}"
   local path
   path="$(hts_matrix_ensure "$profile" "$module")"
-  hts_python - "$path" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" "$branch" <<'PY'
-import sys
-path, alias, trigger, tech, set_, org, project, identifier, etype, branch = sys.argv[1:11]
+  HTS_MX_PATH="$path" \
+  HTS_MX_ALIAS="$alias" \
+  HTS_MX_TRIGGER="$trigger" \
+  HTS_MX_TECH="$tech" \
+  HTS_MX_SET="$set_" \
+  HTS_MX_ORG="$org" \
+  HTS_MX_PROJECT="$project" \
+  HTS_MX_IDENTIFIER="$identifier" \
+  HTS_MX_TYPE="$etype" \
+  HTS_MX_BRANCH="$branch" \
+  hts_python <<'PY'
+import os, sys
 try:
     import yaml
 except ImportError:
     sys.stderr.write("PyYAML required for matrix writes (pip install pyyaml) or install mikefarah yq\n")
     sys.exit(1)
 
-etype = (etype or "github").strip().lower()
+path = os.environ["HTS_MX_PATH"]
+alias = os.environ.get("HTS_MX_ALIAS") or ""
+trigger = os.environ.get("HTS_MX_TRIGGER") or ""
+tech = os.environ.get("HTS_MX_TECH") or ""
+set_ = os.environ.get("HTS_MX_SET") or ""
+org = os.environ.get("HTS_MX_ORG") or ""
+project = os.environ.get("HTS_MX_PROJECT") or ""
+identifier = os.environ.get("HTS_MX_IDENTIFIER") or ""
+etype = (os.environ.get("HTS_MX_TYPE") or "github").strip().lower()
+branch = os.environ.get("HTS_MX_BRANCH") or ""
+
 if etype in ("webhook", "custom_webhook"):
     etype = "custom"
 if etype not in ("github", "custom"):
@@ -100,7 +120,8 @@ data["module"] = data.get("module") or "ci"
 data["entries"] = entries
 with open(path, "w") as f:
     yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
-print(f"added/updated entry: {alias} (type={etype})")
+print("added/updated entry: {} (type={}) org={}/{}/{}".format(
+    alias, etype, org, project, identifier))
 PY
   # Ensure module field matches the matrix file we wrote
   hts_python - "$path" "$module" <<'PY' || true

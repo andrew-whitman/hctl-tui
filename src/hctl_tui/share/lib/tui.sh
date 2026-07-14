@@ -45,11 +45,34 @@ hts_gum_pick() {
 }
 
 hts_gum_input() {
-  # IMPORTANT: gum treats stdin as the initial --value. Never attach /dev/tty
-  # (or any piped content) to stdin here — that shifts later answers into
-  # earlier fields when prompts run inside $(...).
-  # UI still uses the real terminal; only the result goes to stdout.
-  hts_gum input --value="" "$@" </dev/null
+  # Capture gum's answer via a temp file so $(...) never races the TUI against
+  # gum's stdin/"value from stdin" behavior. Stdin is /dev/null (not a tty), so
+  # gum will open /dev/tty for the interactive UI itself.
+  local out ec=0
+  out="$(hts_mktemp gum-in)" || return 1
+  if ! hts_gum input --value="" "$@" </dev/null >"$out"; then
+    ec=$?
+    hts_rm -f "$out"
+    return "$ec"
+  fi
+  /bin/cat "$out"
+  hts_rm -f "$out"
+}
+
+# Reliable line prompts for multi-field forms (no gum $(...) shifting).
+# usage: hts_tty_ask <label> [required=1]
+hts_tty_ask() {
+  local label="$1" required="${2:-1}" val=""
+  while true; do
+    print -n -- "$label: " >/dev/tty 2>/dev/null || print -n -- "$label: "
+    IFS= read -r val </dev/tty || return 1
+    val="$(hts_trim "$val")"
+    if [[ -n "$val" || "$required" != "1" ]]; then
+      print -- "$val"
+      return 0
+    fi
+    print -- "(required)" >/dev/tty 2>/dev/null || print -- "(required)"
+  done
 }
 
 # Active profile without an extra chooser. Only prompts when needed.
@@ -246,7 +269,6 @@ hts_tui_matrix_add() {
   fi
   hts_profile_use "$profile" >/dev/null
 
-  # Use distinct local names (avoid short names that might collide with env).
   local module add_alias add_org add_project add_pipeline add_trigger add_set add_branch
   module="$(hts_default_module)"
 
@@ -254,28 +276,22 @@ hts_tui_matrix_add() {
   {
     print -- "Add pipeline"
     print -- "profile=$profile  module=$module"
-    print -- "Required: alias, org, project, pipeline, trigger, set"
-    print -- "Optional: branch (needed for git-backed / remote pipelines)"
+    print -- "Enter one field per line (branch optional)."
   } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
 
-  add_alias="$(hts_tui_ask "1/7 Alias" "short name")" || return 0
-  add_org="$(hts_tui_ask "2/7 Org" "orgIdentifier")" || return 0
-  add_project="$(hts_tui_ask "3/7 Project" "projectIdentifier")" || return 0
-  add_pipeline="$(hts_tui_ask "4/7 Pipeline" "pipelineIdentifier")" || return 0
-  add_trigger="$(hts_tui_ask "5/7 Trigger" "triggerIdentifier")" || return 0
-  add_branch="$(hts_tui_ask "6/7 Branch (optional)" "e.g. main" 0)" || return 0
-  add_set="$(hts_tui_ask "7/7 Set" "matrix set (e.g. shared)")" || return 0
-
-  [[ -n "$add_alias" && -n "$add_org" && -n "$add_project" && -n "$add_pipeline" && -n "$add_trigger" && -n "$add_set" ]] || {
-    hts_gum_box_error "Alias, org, project, pipeline, trigger, and set are required."
-    hts_tui_pause
-    return 0
-  }
+  # Plain /dev/tty reads — gum input under $(...) was shifting field values.
+  add_alias="$(hts_tty_ask "1/7 Alias")" || return 0
+  add_org="$(hts_tty_ask "2/7 Org")" || return 0
+  add_project="$(hts_tty_ask "3/7 Project")" || return 0
+  add_pipeline="$(hts_tty_ask "4/7 Pipeline")" || return 0
+  add_trigger="$(hts_tty_ask "5/7 Trigger")" || return 0
+  add_branch="$(hts_tty_ask "6/7 Branch (optional, e.g. main)" 0)" || return 0
+  add_set="$(hts_tty_ask "7/7 Set")" || return 0
 
   hts_tui_clear
   {
-    print -- "Confirm pipeline entry"
+    print -- "Confirm — will save EXACTLY these fields:"
     print -- "  alias:    $add_alias"
     print -- "  org:      $add_org"
     print -- "  project:  $add_project"
@@ -289,11 +305,38 @@ hts_tui_matrix_add() {
 
   hts_matrix_add "$profile" "$module" "$add_alias" "$add_trigger" "java" "$add_set" \
     "$add_org" "$add_project" "$add_pipeline" "github" "$add_branch" >/dev/null
+
+  # Show what was actually persisted (catches write/mapping bugs immediately).
+  local path saved
+  path="$(hts_matrix_path "$profile" "$module")"
+  saved="$(
+    HTS_CHK_PATH="$path" HTS_CHK_ALIAS="$add_alias" hts_python <<'PY'
+import os, sys
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)
+path, alias = os.environ["HTS_CHK_PATH"], os.environ["HTS_CHK_ALIAS"]
+data = yaml.safe_load(open(path)) or {}
+for e in data.get("entries") or []:
+    if (e or {}).get("alias") == alias:
+        p = e.get("pipeline") or {}
+        print("org={} project={} pipeline={} trigger={} branch={} set={}".format(
+            p.get("org") or "",
+            p.get("project") or "",
+            p.get("identifier") or "",
+            e.get("trigger") or "",
+            e.get("branch") or "(none)",
+            e.get("set") or "",
+        ))
+        break
+PY
+  )"
+
   hts_tui_clear
   hts_gum_box \
     "Saved: $add_alias" \
-    "$add_org / $add_project / $add_pipeline" \
-    "trigger: $add_trigger  set: $add_set  branch: ${add_branch:-(none)}"
+    "${saved:-$add_org / $add_project / $add_pipeline}"
   hts_tui_pause "Enter — done"
 }
 
