@@ -2,6 +2,9 @@
 # hts — hctl-tui entrypoint
 emulate -L zsh
 set -euo pipefail
+# Inherited xtrace/verbose (e.g. from a parent shell) would paint "choice=..." / "hdr=..."
+# into the TUI on every assignment — never want that in the interactive UI.
+unsetopt xtrace verbose 2>/dev/null || true
 
 # Ensure a sane PATH (some environments start nearly empty)
 export PATH="${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"

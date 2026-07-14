@@ -38,22 +38,32 @@ hts_gum_choose_height() {
   print -- "$r"
 }
 
+# Keep stdout for the selection; give gum the real keyboard via /dev/tty.
+hts_gum_pick() {
+  unsetopt xtrace verbose 2>/dev/null || true
+  if [[ -r /dev/tty ]]; then
+    gum choose "$@" </dev/tty
+  else
+    gum choose "$@"
+  fi
+}
+
 hts_tui_main() {
   hts_require_deps tui || return 1
   hts_ensure_config
+  unsetopt xtrace verbose 2>/dev/null || true
 
   hts_tui_enter
   trap 'hts_tui_leave' EXIT INT TERM
 
   while true; do
+    unsetopt xtrace verbose 2>/dev/null || true
     hts_tui_clear
-    local choice
-    local hdr
-    hdr="$(hts_trunc "hctl-tui — Harness test-suite orchestration (via hctl)" "$(( $(hts_term_cols) - 4 ))")"
+    local choice=""
     choice="$(
-      gum choose \
+      hts_gum_pick \
         --height="$(hts_gum_choose_height)" \
-        --header "$hdr" \
+        --header "Harness Test Suite Orchestration" \
         "Run test suite" \
         "Manage profiles" \
         "Manage pipelines" \
@@ -96,7 +106,7 @@ hts_tui_pick_profile() {
   active="$(hts_active_profile)"
   local picked
   picked="$(
-    gum choose \
+    hts_gum_pick \
       --height="$(hts_gum_choose_height)" \
       --header "$(hts_trunc "Profile (active: $active)" "$(( $(hts_term_cols) - 4 ))")" \
       "${names[@]}"
@@ -135,7 +145,7 @@ hts_tui_run_suite() {
   (( ${#modules[@]} == 0 )) && return 0
 
   hts_tui_clear
-  module="$(gum choose --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 1
+  module="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 1
 
   hts_tui_clear
   if gum confirm --default=false "Filter by tech/set/alias?"; then
@@ -182,7 +192,7 @@ hts_tui_profiles() {
   hts_tui_clear
   local action
   action="$(
-    gum choose \
+    hts_gum_pick \
       --height="$(hts_gum_choose_height)" \
       --header "Manage profiles" \
       "List profiles" \
@@ -324,7 +334,7 @@ hts_tui_pipelines() {
   hts_tui_clear
   local action
   action="$(
-    gum choose \
+    hts_gum_pick \
       --height="$(hts_gum_choose_height)" \
       --header "Manage pipelines (profile: $(hts_trunc "$profile" 24))" \
       "List matrix" \
@@ -343,7 +353,7 @@ hts_tui_pipelines() {
         hts_tui_pause
         return 0
       fi
-      module="$(gum choose --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 0
+      module="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 0
       hts_tui_clear
       hts_matrix_list "$profile" "$module" 2>/dev/null | hts_tui_show
       hts_tui_pause
@@ -360,7 +370,7 @@ hts_tui_pipelines() {
         hts_tui_pause
         return 0
       }
-      module="$(gum choose --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 0
+      module="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 0
       hts_tui_clear
       alias="$(gum input --placeholder "alias to remove")" || return 0
       hts_matrix_remove "$profile" "$module" "$alias"
@@ -376,7 +386,7 @@ hts_tui_settings() {
   hts_tui_clear
   local action
   action="$(
-    gum choose \
+    hts_gum_pick \
       --height="$(hts_gum_choose_height)" \
       --header "Settings" \
       "Set default module" \
