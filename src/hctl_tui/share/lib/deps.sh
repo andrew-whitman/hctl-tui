@@ -59,6 +59,34 @@ hts_install_uv() {
 hts_install_hctl() {
   if hts_have hctl; then
     hts_log "✓ hctl: $(hctl --version 2>/dev/null | head -1 || print installed)"
+    # Older installs lack `hctl config profile` — refresh via uv when possible
+    local supports=0
+    if hctl config profile list >/dev/null 2>&1; then
+      supports=1
+    else
+      local probe
+      probe="$(hctl config profile list 2>&1 || true)"
+      if ! print -- "$probe" | grep -qi 'Unknown config action: *profile'; then
+        # Subcommand exists; other errors (empty config) are fine
+        supports=1
+      fi
+    fi
+    if (( ! supports )); then
+      hts_log "→ upgrading hctl (missing config profile support)…"
+      if hts_install_uv; then
+        local url
+        for url in "${HTS_HCTL_GIT_URLS[@]}"; do
+          uv tool install --force "$url" && break
+        done
+        hts_path_prepend_user_bin
+      fi
+      if hctl config profile list >/dev/null 2>&1 || \
+         ! hctl config profile list 2>&1 | grep -qi 'Unknown config action: *profile'; then
+        hts_log "✓ hctl upgraded"
+      else
+        hts_log "warn: hctl still lacks config profile — hts will use config.json directly"
+      fi
+    fi
     return 0
   fi
   hts_log "→ installing hctl…"
