@@ -230,11 +230,19 @@ except Exception as e:
 if raw_bytes.startswith(b"\xef\xbb\xbf"):
     raw_bytes = raw_bytes[3:]
 raw = raw_bytes.decode("utf-8", errors="replace").strip()
+if not raw:
+    sys.stderr.write(
+        "empty get-trigger file — hctl wrote no payload (auth, trigger id, or pipeline id?)\n"
+    )
+    sys.exit(1)
 # Drop any non-JSON preamble (banners, log lines) before first { or [
 for i, ch in enumerate(raw):
     if ch in "{[":
         raw = raw[i:]
         break
+else:
+    # no JSON object/array start — might still be YAML
+    pass
 
 def repair_json_control_chars(s):
     """Escape raw control chars inside JSON strings (Harness/hctl sometimes emit these)."""
@@ -512,36 +520,56 @@ PY
 }
 
 hts_fetch_trigger_json() {
-  # Args: profile account org project pipeline_id trigger_id
-  # Prints get-trigger JSON on stdout.
+  # Args: profile account org project pipeline_id trigger_id [out_file]
+  # Writes get-trigger payload to out_file (or stdout if omitted).
+  # Prefer --output-file so zsh `print` never mangles JSON escapes (\c, \n, …).
   local profile="$1" account="$2" org="$3" project="$4" pipeline_id="$5" trigger_id="$6"
-  local hctl_bin errfile resp ec=0
+  local out_file="${7:-}"
+  local hctl_bin errfile outfile ec=0
   hctl_bin="$(hts_hctl_bin)" || return 1
-  errfile="$(hts_mktemp hts-get-trigger)" || return 1
-  resp="$(
-    "$hctl_bin" --profile "$profile" triggers get-trigger \
-      --account-identifier "$account" \
-      --org-identifier "$org" \
-      --project-identifier "$project" \
-      --target-identifier "$pipeline_id" \
-      --trigger-identifier "$trigger_id" \
-      --output json 2>"$errfile"
-  )" || ec=$?
-  if (( ec != 0 )); then
-    local err
-    err="$(/bin/cat "$errfile" 2>/dev/null || true)"
-    hts_rm -f "$errfile"
-    hts_err "hctl triggers get-trigger failed for trigger=$trigger_id pipeline=$pipeline_id"
-    [[ -n "$err" ]] && hts_err "  $err"
-    [[ -n "$resp" ]] && hts_err "  $resp"
-    return 1
+  errfile="$(hts_mktemp hts-get-trigger-err)" || return 1
+  if [[ -n "$out_file" ]]; then
+    outfile="$out_file"
+    : >"$outfile"
+  else
+    outfile="$(hts_mktemp hts-get-trigger-out)" || {
+      hts_rm -f "$errfile"
+      return 1
+    }
   fi
+
+  "$hctl_bin" --profile "$profile" triggers get-trigger \
+    --account-identifier "$account" \
+    --org-identifier "$org" \
+    --project-identifier "$project" \
+    --target-identifier "$pipeline_id" \
+    --trigger-identifier "$trigger_id" \
+    --output json \
+    --output-file "$outfile" \
+    >/dev/null 2>"$errfile" || ec=$?
+
+  local err=""
+  err="$(/bin/cat "$errfile" 2>/dev/null || true)"
   hts_rm -f "$errfile"
-  if [[ -z "$resp" ]]; then
-    hts_err "empty response from hctl triggers get-trigger"
+
+  # hctl sometimes exits 0 on transport errors while writing nothing
+  if (( ec != 0 )) || [[ ! -s "$outfile" ]]; then
+    hts_err "hctl triggers get-trigger failed for trigger=$trigger_id pipeline=$org/$project/$pipeline_id (exit=$ec)"
+    [[ -n "$err" ]] && hts_err "  $err"
+    if [[ -s "$outfile" ]]; then
+      hts_err "  partial output: $(/bin/head -c 200 "$outfile" | tr '\n' ' ')"
+    else
+      hts_err "  (empty response — check trigger id, pipeline id, and hctl profile auth)"
+    fi
+    [[ -z "$out_file" ]] && hts_rm -f "$outfile"
     return 1
   fi
-  print -- "$resp"
+
+  if [[ -z "$out_file" ]]; then
+    /bin/cat "$outfile"
+    hts_rm -f "$outfile"
+  fi
+  return 0
 }
 
 hts_fire_pipeline_execute() {
@@ -593,7 +621,7 @@ hts_fire_pipeline_execute() {
         hts_err "could not create temp trigger file"
         return 1
       }
-      hts_fetch_trigger_json "$profile" "$account" "$org" "$project" "$pipeline_id" "$trigger_id" >"$trig_file" || {
+      hts_fetch_trigger_json "$profile" "$account" "$org" "$project" "$pipeline_id" "$trigger_id" "$trig_file" || {
         hts_rm -f "$trig_file"
         return 1
       }
