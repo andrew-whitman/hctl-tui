@@ -54,10 +54,12 @@ hts run --module ci --dry-run
 hts run --module ci --tech java --set shared
 hts matrix list --module ci
 hts matrix add --module ci \
-  --alias java-shared-feature --trigger feature \
+  --alias my-alias --trigger MY_TRIGGER \
   --tech java --set shared \
-  --pipeline-org default --pipeline-project my_proj --pipeline-id my_pipe
+  --pipeline-org YOUR_ORG --pipeline-project YOUR_PROJECT --pipeline-id YOUR_PIPELINE_ID
+hts matrix remove --module ci --alias my-alias
 hts profile list
+hts profile use default
 hts doctor
 ```
 

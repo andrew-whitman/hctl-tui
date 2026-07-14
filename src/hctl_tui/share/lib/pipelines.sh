@@ -7,7 +7,7 @@ hts_matrix_ensure() {
   path="$(hts_matrix_path "$profile" "$module")"
   /bin/mkdir -p "${path:h}"
   if [[ ! -f "$path" ]]; then
-    cat >"$path" <<EOF
+    /bin/cat >"$path" <<EOF
 module: ${module}
 entries: []
 EOF

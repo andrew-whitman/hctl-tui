@@ -17,17 +17,21 @@ source "$HTS_LIB/runner.sh"
 source "$HTS_LIB/tui.sh"
 
 hts_usage() {
-  cat <<'EOF'
+  /bin/cat <<'EOF'
 hts — Harness test-suite orchestration (hctl-tui)
 
 Usage:
-  hts                          Interactive TUI
-  hts init [--profile NAME]    First-run setup (hctl auth + hts config)
-  hts run [options]            Fire (or dry-run) a matrix
-  hts profile list|use|init
-  hts matrix list|add|remove
-  hts doctor
-  hts help
+  hts                              Interactive TUI (TTY)
+  hts help                         Show this help
+  hts init [--profile NAME]        First-run: hts config + hctl auth
+  hts doctor                       Show local config / hctl doctor
+  hts run [options]                Fire or dry-run a matrix
+  hts profile list                 List hctl profiles
+  hts profile use NAME             Switch active hctl profile
+  hts profile init [NAME]          Create/update an hctl profile
+  hts matrix list [options]        List matrix entries
+  hts matrix add [options]         Add/update a matrix entry
+  hts matrix remove [options]      Remove a matrix entry by alias
 
 Run options:
   --module NAME        Matrix module (default from config)
@@ -39,10 +43,16 @@ Run options:
   --no-open            Do not open uiUrls
   --open               Open uiUrls even if config disables it
 
-Matrix add options:
-  --module --alias --trigger --tech --set
-  --pipeline-org --pipeline-project --pipeline-id
-  [--profile]
+Matrix options (list/add/remove):
+  --module NAME
+  --profile NAME
+  --alias NAME                 (add/remove; required for remove)
+  --trigger ID                 (add; required)
+  --tech NAME                  (add; default: java)
+  --set NAME                   (add; default: shared)
+  --pipeline-org ORG           (add; required)
+  --pipeline-project PROJECT   (add; required)
+  --pipeline-id ID             (add; required)
 EOF
 }
 
@@ -80,7 +90,7 @@ hts_cmd_init() {
     if [[ -f "$src" ]]; then
       /bin/cp "$src" "$example"
     else
-      cat >"$example" <<'EOF'
+      /bin/cat >"$example" <<'EOF'
 module: ci
 entries: []
 EOF
@@ -151,10 +161,19 @@ hts_cmd_profile() {
       hts_profile_use "$1"
       ;;
     init)
+      if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        print -- "usage: hts profile init [NAME]"
+        print -- "  Creates/updates an hctl profile (requires hctl)."
+        return 0
+      fi
       local name=""
       if [[ "${1:-}" == "--name" || "${1:-}" == "--profile" ]]; then name="${2:-}"; fi
       if [[ -n "${1:-}" && "${1:-}" != "--name" && "${1:-}" != "--profile" ]]; then name="$1"; fi
       hts_profile_init "$name"
+      ;;
+    -h|--help)
+      print -- "usage: hts profile list|use|init"
+      return 0
       ;;
     *) hts_die "usage: hts profile list|use|init"; return 1 ;;
   esac
@@ -162,13 +181,19 @@ hts_cmd_profile() {
 
 hts_cmd_matrix() {
   local sub="${1:-list}"
-  shift || true
+  if (( $# > 0 )); then
+    shift
+  fi
+  if [[ "$sub" == "-h" || "$sub" == "--help" ]]; then
+    print -- "usage: hts matrix list|add|remove [options]"
+    print -- "  see: hts help"
+    return 0
+  fi
 
   local profile="" module="" alias="" trigger="" tech="" set_=""
   local org="" project="" identifier=""
 
   # parse remaining flags (shared)
-  local -a rest=()
   while (( $# )); do
     case "$1" in
       --profile) profile="$2"; shift 2 ;;
@@ -180,7 +205,15 @@ hts_cmd_matrix() {
       --pipeline-org) org="$2"; shift 2 ;;
       --pipeline-project) project="$2"; shift 2 ;;
       --pipeline-id) identifier="$2"; shift 2 ;;
-      *) rest+=("$1"); shift ;;
+      -h|--help)
+        print -- "usage: hts matrix list|add|remove [options]"
+        print -- "  see: hts help"
+        return 0
+        ;;
+      *)
+        hts_die "unknown matrix option: $1 (try: hts help)"
+        return 1
+        ;;
     esac
   done
 

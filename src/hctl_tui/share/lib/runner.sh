@@ -133,7 +133,13 @@ hts_run_matrix() {
   local count
   count="$(print -- "$filtered" | hts_python -c 'import json,sys; print(len(json.load(sys.stdin)))')"
   if [[ "$count" == "0" ]]; then
-    hts_log "no entries matched filters (tech=${tech:-*} set=${set_:-*} alias=${aliases:-*})"
+    local total
+    total="$(print -- "$entries" | hts_python -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || print 0)"
+    if [[ "$total" == "0" ]]; then
+      hts_log "matrix is empty for profile=$profile module=$module — add entries with: hts matrix add --module $module ..."
+    else
+      hts_log "no entries matched filters (tech=${tech:-*} set=${set_:-*} alias=${aliases:-*})"
+    fi
     return 1
   fi
 

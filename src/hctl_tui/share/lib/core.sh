@@ -60,7 +60,7 @@ hts_require_deps() {
 hts_ensure_config() {
   /bin/mkdir -p "$HTS_MATRICES_DIR"
   if [[ ! -f "$HTS_CONFIG_FILE" ]]; then
-    cat >"$HTS_CONFIG_FILE" <<'EOF'
+    /bin/cat >"$HTS_CONFIG_FILE" <<'EOF'
 active_hctl_profile: default
 defaults:
   module: ci
