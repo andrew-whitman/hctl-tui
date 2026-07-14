@@ -21,7 +21,7 @@ uv tool upgrade hctl-tui
 uv tool install --force git+https://github.com/andrew-whitman/hctl-tui.git
 ```
 
-Still need system tools on PATH: **zsh**, **gum**, and **hctl**. Run `hts doctor` after install.
+Still need **zsh** on PATH. Peer tools (**gum**, **hctl**) are installed automatically by `hts init` when missing (`hctl` via `uv tool install` when possible; `gum` via Homebrew or a GitHub release binary into `~/.local/bin`).
 
 ### From a git checkout
 
@@ -42,10 +42,11 @@ uv tool install --editable .
 
 ```bash
 uv tool install git+https://github.com/andrew-whitman/hctl-tui.git
-uv tool install git+https://github.com/ianmatson/harness-cli.git   # if needed
-hts init           # writes hts config + runs hctl auth onboarding
+hts init           # installs gum/hctl if needed, writes config, runs hctl auth
 hts                # interactive TUI
 ```
+
+Use `hts init --skip-deps` to skip installs, or `hts doctor --fix-deps` to (re)install peers later.
 
 Non-interactive:
 

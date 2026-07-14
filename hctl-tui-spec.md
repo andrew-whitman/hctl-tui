@@ -45,9 +45,10 @@ hctl-tui/
 
 ```bash
 uv tool install git+https://github.com/andrew-whitman/hctl-tui.git
+hts init    # installs hctl (via uv) and gum when missing, then hctl auth
 ```
 
-External runtime deps: `zsh`, `gum`, `hctl`.
+Peer deps: `zsh` (required), `hctl` + `gum` (installed by `hts init` / `hts doctor --fix-deps`). Use `hts init --skip-deps` to skip installs.
 
 ## Config structure (`~/.config/hctl-tui/`)
 
