@@ -58,6 +58,7 @@ hts matrix add --module ci \
   --type github --alias my-alias --trigger YOUR_TRIGGER_ID --branch main \
   --tech java --set shared \
   --pipeline-org YOUR_ORG --pipeline-project YOUR_PROJECT --pipeline-id YOUR_PIPELINE_ID
+hts matrix edit --module ci --alias my-alias --branch develop
 hts matrix remove --module ci --alias my-alias
 hts profile list
 hts profile use default

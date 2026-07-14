@@ -75,6 +75,34 @@ hts_tty_ask() {
   done
 }
 
+# Edit prompt: blank keeps current. For optional fields, "-" clears.
+# usage: hts_tty_ask_keep <label> <current> [required=1]
+# Prints the value to use (never empty when required unless current was set).
+hts_tty_ask_keep() {
+  local label="$1" current="${2:-}" required="${3:-1}" val=""
+  local shown="${current:-(empty)}"
+  while true; do
+    print -n -- "$label [$shown]: " >/dev/tty 2>/dev/null || print -n -- "$label [$shown]: "
+    IFS= read -r val </dev/tty || return 1
+    val="$(hts_trim "$val")"
+    if [[ -z "$val" ]]; then
+      print -- "$current"
+      return 0
+    fi
+    if [[ "$val" == "-" ]]; then
+      if [[ "$required" == "1" ]]; then
+        print -- "(required — enter a value, or leave blank to keep)" >/dev/tty 2>/dev/null \
+          || print -- "(required — enter a value, or leave blank to keep)"
+        continue
+      fi
+      print -- ""
+      return 0
+    fi
+    print -- "$val"
+    return 0
+  done
+}
+
 # Active profile without an extra chooser. Only prompts when needed.
 hts_tui_profile() {
   local names=() n active
@@ -156,6 +184,7 @@ hts_tui_main() {
         --header "Harness Test Suite  ·  profile: ${active}" \
         "Run test suite" \
         "Add pipeline" \
+        "Edit pipeline" \
         "List pipelines" \
         "Remove pipeline" \
         "Profiles" \
@@ -166,6 +195,7 @@ hts_tui_main() {
     case "$choice" in
       "Run test suite")   hts_tui_run_suite || true ;;
       "Add pipeline")     hts_tui_matrix_add || true ;;
+      "Edit pipeline")    hts_tui_matrix_edit || true ;;
       "List pipelines")   hts_tui_list_matrix || true ;;
       "Remove pipeline")  hts_tui_remove_entry || true ;;
       "Profiles")         hts_tui_profiles || true ;;
@@ -340,6 +370,137 @@ PY
   hts_tui_pause "Enter — done"
 }
 
+hts_tui_pick_alias() {
+  # usage: hts_tui_pick_alias profile module header
+  # Prints selected alias. Choices show "alias — org/project/pipeline".
+  local profile="$1" module="$2" header="${3:-Pick pipeline}"
+  local labels=() label alias
+  while IFS= read -r label; do
+    [[ -n "$label" ]] && labels+=("$label")
+  done < <(
+    hts_matrix_entries_json "$profile" "$module" | hts_python -c '
+import json,sys
+for e in json.load(sys.stdin):
+    al = e.get("alias") or ""
+    if not al:
+        continue
+    p = e.get("pipeline") or {}
+    pipe = "{}/{}/{}".format(p.get("org") or "-", p.get("project") or "-", p.get("identifier") or "-")
+    br = e.get("branch") or ""
+    extra = "  branch="+br if br else ""
+    print("{} — {}{}".format(al, pipe, extra))
+'
+  )
+  if (( ${#labels[@]} == 0 )); then
+    return 1
+  fi
+  hts_tui_clear
+  label="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "$header" "${labels[@]}")" || return 1
+  # alias is everything before " — "
+  alias="${label%% — *}"
+  print -- "$alias"
+}
+
+hts_tui_matrix_edit() {
+  local profile="${1:-}"
+  if [[ -z "$profile" ]]; then
+    profile="$(hts_tui_profile)" || return 1
+  fi
+  hts_profile_use "$profile" >/dev/null
+
+  local module alias entry
+  local cur_alias cur_org cur_project cur_pipeline cur_trigger cur_set cur_branch cur_tech cur_type
+  local cur_repo cur_connector
+  local new_alias new_org new_project new_pipeline new_trigger new_set new_branch
+
+  hts_tui_clear
+  module="$(hts_tui_pick_module "$profile" "Edit · module")" || {
+    hts_gum_box "No pipelines yet."
+    hts_tui_pause
+    return 0
+  }
+
+  alias="$(hts_tui_pick_alias "$profile" "$module" "Edit · pick pipeline")" || {
+    hts_gum_box "Matrix is empty."
+    hts_tui_pause
+    return 0
+  }
+
+  entry="$(hts_matrix_get_entry_json "$profile" "$module" "$alias")" || {
+    hts_gum_box_error "Could not load: $alias"
+    hts_tui_pause
+    return 0
+  }
+
+  # Unpack fields
+  eval "$(
+    print -- "$entry" | hts_python -c '
+import json,sys,shlex
+e=json.load(sys.stdin)
+p=e.get("pipeline") or {}
+def q(k,v):
+    print("{}={}".format(k, shlex.quote(str(v or ""))))
+q("cur_alias", e.get("alias"))
+q("cur_type", e.get("type") or "github")
+q("cur_tech", e.get("tech") or "java")
+q("cur_set", e.get("set") or "")
+q("cur_trigger", e.get("trigger") or "")
+q("cur_branch", e.get("branch") or "")
+q("cur_repo", e.get("repo") or "")
+q("cur_connector", e.get("connector") or "")
+q("cur_org", p.get("org") or "")
+q("cur_project", p.get("project") or "")
+q("cur_pipeline", p.get("identifier") or "")
+'
+  )"
+
+  hts_tui_clear
+  {
+    print -- "Edit pipeline — leave blank to keep current value"
+    print -- "Optional: type - on Branch to clear it"
+    print -- "profile=$profile  module=$module"
+    print -- ""
+    print -- "Current: $cur_alias"
+    print -- "  $cur_org / $cur_project / $cur_pipeline"
+    print -- "  trigger=${cur_trigger:-(none)}  branch=${cur_branch:-(none)}  set=${cur_set:-(none)}"
+  } | hts_tui_show
+  print -- "" >/dev/tty 2>/dev/null || print -- ""
+
+  new_alias="$(hts_tty_ask_keep "1/7 Alias" "$cur_alias")" || return 0
+  new_org="$(hts_tty_ask_keep "2/7 Org" "$cur_org")" || return 0
+  new_project="$(hts_tty_ask_keep "3/7 Project" "$cur_project")" || return 0
+  new_pipeline="$(hts_tty_ask_keep "4/7 Pipeline" "$cur_pipeline")" || return 0
+  new_trigger="$(hts_tty_ask_keep "5/7 Trigger" "$cur_trigger")" || return 0
+  new_branch="$(hts_tty_ask_keep "6/7 Branch (- to clear)" "$cur_branch" 0)" || return 0
+  new_set="$(hts_tty_ask_keep "7/7 Set" "$cur_set")" || return 0
+
+  hts_tui_clear
+  {
+    print -- "Confirm — will save:"
+    print -- "  alias:    $new_alias"
+    print -- "  org:      $new_org"
+    print -- "  project:  $new_project"
+    print -- "  pipeline: $new_pipeline"
+    print -- "  trigger:  $new_trigger"
+    print -- "  branch:   ${new_branch:-(none)}"
+    print -- "  set:      $new_set"
+  } | hts_tui_show
+  print -- "" >/dev/tty 2>/dev/null || print -- ""
+  hts_gum confirm "Save changes?" || return 0
+
+  hts_matrix_update "$profile" "$module" "$alias" "$new_alias" "$new_trigger" \
+    "${cur_tech:-java}" "$new_set" "$new_org" "$new_project" "$new_pipeline" \
+    "${cur_type:-github}" "$new_branch" "$cur_repo" "$cur_connector" >/dev/null || {
+    hts_gum_box_error "Update failed"
+    hts_tui_pause
+    return 0
+  }
+
+  hts_tui_clear
+  hts_gum_box "Updated: $new_alias" "$new_org / $new_project / $new_pipeline"
+  hts_tui_pause "Enter — done"
+}
+
 hts_tui_list_matrix() {
   local profile module
   profile="$(hts_tui_profile)" || return 1
@@ -357,7 +518,7 @@ hts_tui_list_matrix() {
 }
 
 hts_tui_remove_entry() {
-  local profile module alias aliases=() a
+  local profile module alias
   profile="$(hts_tui_profile)" || return 1
   hts_profile_use "$profile" >/dev/null
 
@@ -368,26 +529,12 @@ hts_tui_remove_entry() {
     return 0
   }
 
-  while IFS= read -r a; do
-    [[ -n "$a" ]] && aliases+=("$a")
-  done < <(
-    hts_matrix_entries_json "$profile" "$module" | hts_python -c '
-import json,sys
-for e in json.load(sys.stdin):
-    al=e.get("alias") or ""
-    if al: print(al)
-'
-  )
-
-  if (( ${#aliases[@]} == 0 )); then
-    hts_tui_clear
+  alias="$(hts_tui_pick_alias "$profile" "$module" "Remove · pick pipeline")" || {
     hts_gum_box "Matrix is empty."
     hts_tui_pause
     return 0
-  fi
+  }
 
-  hts_tui_clear
-  alias="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Remove alias" "${aliases[@]}")" || return 0
   hts_gum confirm "Delete '$alias'?" || return 0
   hts_matrix_remove "$profile" "$module" "$alias" >/dev/null
   hts_tui_clear

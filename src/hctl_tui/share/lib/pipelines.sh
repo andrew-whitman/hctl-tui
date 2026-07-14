@@ -46,8 +46,25 @@ try:
     data = yaml.safe_load(open(path)) or {}
     print(json.dumps(data.get("entries") or []))
 except ImportError:
-    # ultra-fallback: empty
     print("[]")
+PY
+}
+
+hts_matrix_get_entry_json() {
+  # usage: hts_matrix_get_entry_json profile module alias
+  local profile="$1" module="$2" alias="$3"
+  local entries
+  entries="$(hts_matrix_entries_json "$profile" "$module")"
+  HTS_MX_ENTRIES="$entries" HTS_MX_ALIAS="$alias" hts_python <<'PY'
+import json, os, sys
+entries = json.loads(os.environ.get("HTS_MX_ENTRIES") or "[]")
+alias = os.environ.get("HTS_MX_ALIAS") or ""
+for e in entries:
+    if (e or {}).get("alias") == alias:
+        print(json.dumps(e))
+        raise SystemExit(0)
+sys.stderr.write(f"no entry with alias: {alias}\n")
+raise SystemExit(1)
 PY
 }
 
@@ -55,7 +72,6 @@ hts_matrix_add() {
   # optional 10th arg: type (github|custom), default github
   # optional 11th arg: branch (for git-backed pipelines)
   # optional 12th/13th: repo, connector overrides
-  # Values are passed to Python via env vars (not argv) to avoid positional drift.
   local profile="$1" module="$2"
   local alias="$3" trigger="$4" tech="$5" set_="$6"
   local org="$7" project="$8" identifier="$9"
@@ -102,7 +118,6 @@ if etype not in ("github", "custom"):
 
 data = yaml.safe_load(open(path)) or {}
 entries = list(data.get("entries") or [])
-# replace if alias exists
 entries = [e for e in entries if (e or {}).get("alias") != alias]
 entry = {
     "alias": alias,
@@ -116,7 +131,6 @@ entry = {
     },
 }
 if trigger:
-    # github: webhook trigger id (get-trigger → inputYaml); custom: webhook id
     entry["trigger"] = trigger
 if branch:
     entry["branch"] = branch
@@ -132,7 +146,6 @@ with open(path, "w") as f:
 print("added/updated entry: {} (type={}) org={}/{}/{}".format(
     alias, etype, org, project, identifier))
 PY
-  # Ensure module field matches the matrix file we wrote
   hts_python - "$path" "$module" <<'PY' || true
 import sys
 path, module = sys.argv[1:3]
@@ -144,6 +157,180 @@ data = yaml.safe_load(open(path)) or {}
 data["module"] = module
 with open(path, "w") as f:
     yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+PY
+}
+
+hts_matrix_update() {
+  # Full replace of an existing entry (TUI edit). Fails if alias missing.
+  # Args: profile module alias new_alias trigger tech set org project id type branch repo connector
+  local profile="$1" module="$2" alias="$3"
+  local path
+  path="$(hts_matrix_path "$profile" "$module")"
+  [[ -f "$path" ]] || { hts_die "matrix not found: $path"; return 1; }
+  HTS_MX_PATH="$path" \
+  HTS_MX_ALIAS="$alias" \
+  HTS_MX_NEW_ALIAS="${4:-}" \
+  HTS_MX_TRIGGER="${5:-}" \
+  HTS_MX_TECH="${6:-}" \
+  HTS_MX_SET="${7:-}" \
+  HTS_MX_ORG="${8:-}" \
+  HTS_MX_PROJECT="${9:-}" \
+  HTS_MX_IDENTIFIER="${10:-}" \
+  HTS_MX_TYPE="${11:-github}" \
+  HTS_MX_BRANCH="${12:-}" \
+  HTS_MX_REPO="${13:-}" \
+  HTS_MX_CONNECTOR="${14:-}" \
+  hts_python <<'PY'
+import os, sys
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("PyYAML required for matrix writes\n")
+    sys.exit(1)
+
+path = os.environ["HTS_MX_PATH"]
+alias = os.environ.get("HTS_MX_ALIAS") or ""
+new_alias = (os.environ.get("HTS_MX_NEW_ALIAS") or "").strip() or alias
+
+data = yaml.safe_load(open(path)) or {}
+entries = list(data.get("entries") or [])
+idx = next((i for i, e in enumerate(entries) if (e or {}).get("alias") == alias), None)
+if idx is None:
+    sys.stderr.write(f"no entry with alias: {alias}\n")
+    sys.exit(1)
+if new_alias != alias and any((e or {}).get("alias") == new_alias for e in entries):
+    sys.stderr.write(f"alias already exists: {new_alias}\n")
+    sys.exit(1)
+
+etype = (os.environ.get("HTS_MX_TYPE") or "github").strip().lower()
+if etype in ("webhook", "custom_webhook"):
+    etype = "custom"
+if etype not in ("github", "custom"):
+    etype = "github"
+
+entry = {
+    "alias": new_alias,
+    "type": etype,
+    "tech": os.environ.get("HTS_MX_TECH") or "java",
+    "set": os.environ.get("HTS_MX_SET") or "shared",
+    "pipeline": {
+        "org": os.environ.get("HTS_MX_ORG") or "",
+        "project": os.environ.get("HTS_MX_PROJECT") or "",
+        "identifier": os.environ.get("HTS_MX_IDENTIFIER") or "",
+    },
+}
+trigger = os.environ.get("HTS_MX_TRIGGER") or ""
+branch = os.environ.get("HTS_MX_BRANCH") or ""
+repo = os.environ.get("HTS_MX_REPO") or ""
+connector = os.environ.get("HTS_MX_CONNECTOR") or ""
+if trigger:
+    entry["trigger"] = trigger
+if branch:
+    entry["branch"] = branch
+if repo:
+    entry["repo"] = repo
+if connector:
+    entry["connector"] = connector
+
+entries[idx] = entry
+data["entries"] = entries
+with open(path, "w") as f:
+    yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+p = entry["pipeline"]
+suffix = f" → {new_alias}" if new_alias != alias else ""
+print("updated entry: {}{} org={}/{}/{}".format(
+    alias, suffix, p.get("org"), p.get("project"), p.get("identifier")))
+PY
+}
+
+hts_matrix_patch() {
+  # Partial update for CLI: only fields with HTS_MX_PATCH_<NAME>=1 are applied.
+  local profile="$1" module="$2" alias="$3"
+  local path
+  path="$(hts_matrix_path "$profile" "$module")"
+  [[ -f "$path" ]] || { hts_die "matrix not found: $path"; return 1; }
+  HTS_MX_PATH="$path" HTS_MX_ALIAS="$alias" hts_python <<'PY'
+import os, sys
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("PyYAML required for matrix writes\n")
+    sys.exit(1)
+
+path = os.environ["HTS_MX_PATH"]
+alias = os.environ.get("HTS_MX_ALIAS") or ""
+new_alias = (os.environ.get("HTS_MX_NEW_ALIAS") or "").strip()
+
+data = yaml.safe_load(open(path)) or {}
+entries = list(data.get("entries") or [])
+idx = next((i for i, e in enumerate(entries) if (e or {}).get("alias") == alias), None)
+if idx is None:
+    sys.stderr.write(f"no entry with alias: {alias}\n")
+    sys.exit(1)
+
+entry = dict(entries[idx] or {})
+pipe = dict(entry.get("pipeline") or {})
+
+def patching(key):
+    return os.environ.get("HTS_MX_PATCH_" + key) == "1"
+
+if new_alias:
+    if new_alias != alias and any((e or {}).get("alias") == new_alias for e in entries):
+        sys.stderr.write(f"alias already exists: {new_alias}\n")
+        sys.exit(1)
+    entry["alias"] = new_alias
+
+if patching("TYPE"):
+    etype = (os.environ.get("HTS_MX_TYPE") or "github").strip().lower()
+    if etype in ("webhook", "custom_webhook"):
+        etype = "custom"
+    if etype not in ("github", "custom"):
+        etype = "github"
+    entry["type"] = etype
+if patching("TECH"):
+    entry["tech"] = os.environ.get("HTS_MX_TECH") or ""
+if patching("SET"):
+    entry["set"] = os.environ.get("HTS_MX_SET") or ""
+if patching("ORG"):
+    pipe["org"] = os.environ.get("HTS_MX_ORG") or ""
+if patching("PROJECT"):
+    pipe["project"] = os.environ.get("HTS_MX_PROJECT") or ""
+if patching("IDENTIFIER"):
+    pipe["identifier"] = os.environ.get("HTS_MX_IDENTIFIER") or ""
+if patching("TRIGGER"):
+    v = os.environ.get("HTS_MX_TRIGGER") or ""
+    if v:
+        entry["trigger"] = v
+    else:
+        entry.pop("trigger", None)
+if patching("BRANCH"):
+    v = os.environ.get("HTS_MX_BRANCH") or ""
+    if v:
+        entry["branch"] = v
+    else:
+        entry.pop("branch", None)
+if patching("REPO"):
+    v = os.environ.get("HTS_MX_REPO") or ""
+    if v:
+        entry["repo"] = v
+    else:
+        entry.pop("repo", None)
+if patching("CONNECTOR"):
+    v = os.environ.get("HTS_MX_CONNECTOR") or ""
+    if v:
+        entry["connector"] = v
+    else:
+        entry.pop("connector", None)
+
+entry["pipeline"] = pipe
+entries[idx] = entry
+data["entries"] = entries
+with open(path, "w") as f:
+    yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+p = entry.get("pipeline") or {}
+suffix = f" → {entry.get('alias')}" if entry.get("alias") != alias else ""
+print("updated entry: {}{} org={}/{}/{}".format(
+    alias, suffix, p.get("org"), p.get("project"), p.get("identifier")))
 PY
 }
 
@@ -176,7 +363,6 @@ PY
 hts_matrix_filter() {
   # Filter JSON entries by optional tech/set/alias (comma-separated aliases)
   # stdin: JSON array; args: tech set aliases
-  # NOTE: do not use `python - <<EOF` here — the heredoc would steal stdin from the pipe.
   local tech="${1:-}" set_="${2:-}" aliases="${3:-}"
   local raw
   raw="$(/bin/cat)"

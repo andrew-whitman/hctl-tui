@@ -50,7 +50,7 @@ Usage:
   hts run [options]
       Fire or dry-run a matrix
   hts profile list|use NAME|init [NAME]
-  hts matrix list|add|remove [options]
+  hts matrix list|add|edit|remove [options]
 
 Init installs peer tools when missing
 (prefer uv for hctl; brew/GitHub for gum).
@@ -66,24 +66,27 @@ Run options:
   --no-open         Do not open uiUrls
   --open            Open uiUrls anyway
 
-Matrix options (list/add/remove):
+Matrix options (list/add/edit/remove):
   --module NAME
   --profile NAME
-  --alias NAME              add/remove
-  --type github|custom      add (default: github)
+  --alias NAME              add/edit/remove
+  --new-alias NAME          edit: rename
+  --type github|custom      add/edit (default: github)
   --trigger ID              github: webhook trigger id (fetches inputYaml);
                             custom: required webhook trigger id
   --branch NAME             github: branch (resolves <+trigger.branch>)
   --repo NAME               github: override repo (--repo-identifier)
   --connector ID            github: override connectorRef query
-  --tech NAME               add (default: java)
-  --set NAME                add (default: shared)
-  --pipeline-org ORG        add (required)
-  --pipeline-project NAME   add (required)
-  --pipeline-id ID          add (required)
+  --tech NAME               add/edit (default: java)
+  --set NAME                add/edit (default: shared)
+  --pipeline-org ORG        add (required) / edit
+  --pipeline-project NAME   add (required) / edit
+  --pipeline-id ID          add (required) / edit
 
 type=github: get-trigger → resolve inputYaml → pipeline execute.
 type=custom: POST Harness custom webhook trigger.
+Edit (CLI): only flags you pass are changed.
+Edit (TUI): pick a pipeline; blank keeps the current value.
 EOF
 }
 
@@ -227,32 +230,35 @@ hts_cmd_matrix() {
     shift
   fi
   if [[ "$sub" == "-h" || "$sub" == "--help" ]]; then
-    print -- "usage: hts matrix list|add|remove [options]"
+    print -- "usage: hts matrix list|add|edit|remove [options]"
     print -- "  see: hts help"
     return 0
   fi
 
-  local profile="" module="" alias="" trigger="" tech="" set_=""
-  local org="" project="" identifier="" etype="github" branch="" repo="" connector=""
+  local profile="" module="" alias="" new_alias="" trigger="" tech="" set_=""
+  local org="" project="" identifier="" etype="" branch="" repo="" connector=""
+  local patch_type=0 patch_trigger=0 patch_tech=0 patch_set=0
+  local patch_org=0 patch_project=0 patch_id=0 patch_branch=0
+  local patch_repo=0 patch_connector=0
 
-  # parse remaining flags (shared)
   while (( $# )); do
     case "$1" in
       --profile) profile="$2"; shift 2 ;;
       --module)  module="$2"; shift 2 ;;
       --alias)   alias="$2"; shift 2 ;;
-      --type)    etype="$2"; shift 2 ;;
-      --trigger) trigger="$2"; shift 2 ;;
-      --branch)  branch="$2"; shift 2 ;;
-      --repo)    repo="$2"; shift 2 ;;
-      --connector) connector="$2"; shift 2 ;;
-      --tech)    tech="$2"; shift 2 ;;
-      --set)     set_="$2"; shift 2 ;;
-      --pipeline-org) org="$2"; shift 2 ;;
-      --pipeline-project) project="$2"; shift 2 ;;
-      --pipeline-id) identifier="$2"; shift 2 ;;
+      --new-alias) new_alias="$2"; shift 2 ;;
+      --type)    etype="$2"; patch_type=1; shift 2 ;;
+      --trigger) trigger="$2"; patch_trigger=1; shift 2 ;;
+      --branch)  branch="$2"; patch_branch=1; shift 2 ;;
+      --repo)    repo="$2"; patch_repo=1; shift 2 ;;
+      --connector) connector="$2"; patch_connector=1; shift 2 ;;
+      --tech)    tech="$2"; patch_tech=1; shift 2 ;;
+      --set)     set_="$2"; patch_set=1; shift 2 ;;
+      --pipeline-org) org="$2"; patch_org=1; shift 2 ;;
+      --pipeline-project) project="$2"; patch_project=1; shift 2 ;;
+      --pipeline-id) identifier="$2"; patch_id=1; shift 2 ;;
       -h|--help)
-        print -- "usage: hts matrix list|add|remove [options]"
+        print -- "usage: hts matrix list|add|edit|remove [options]"
         print -- "  see: hts help"
         return 0
         ;;
@@ -277,7 +283,7 @@ hts_cmd_matrix() {
       etype="${etype:l}"
       case "$etype" in
         custom|webhook|custom_webhook) etype="custom" ;;
-        github|execute|pipeline|*) etype="github" ;;
+        ""|github|execute|pipeline|*) etype="github" ;;
       esac
       if [[ -z "$trigger" ]]; then
         hts_die "matrix add requires --trigger (github webhook trigger id, or custom webhook id)"
@@ -287,11 +293,35 @@ hts_cmd_matrix() {
       set_="${set_:-shared}"
       hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" "$branch" "$repo" "$connector"
       ;;
+    edit)
+      [[ -n "$alias" ]] || { hts_die "matrix edit requires --alias"; return 1; }
+      # Must change at least one field (or rename)
+      if [[ -z "$new_alias" ]] && (( !patch_type && !patch_trigger && !patch_tech && !patch_set \
+            && !patch_org && !patch_project && !patch_id && !patch_branch \
+            && !patch_repo && !patch_connector )); then
+        hts_die "matrix edit: pass at least one field to change (e.g. --branch main, --trigger ID)"
+        return 1
+      fi
+      # Verify entry exists early for a clearer error
+      hts_matrix_get_entry_json "$profile" "$module" "$alias" >/dev/null || return 1
+      HTS_MX_NEW_ALIAS="$new_alias" \
+      HTS_MX_TYPE="$etype" HTS_MX_PATCH_TYPE="$patch_type" \
+      HTS_MX_TRIGGER="$trigger" HTS_MX_PATCH_TRIGGER="$patch_trigger" \
+      HTS_MX_TECH="$tech" HTS_MX_PATCH_TECH="$patch_tech" \
+      HTS_MX_SET="$set_" HTS_MX_PATCH_SET="$patch_set" \
+      HTS_MX_ORG="$org" HTS_MX_PATCH_ORG="$patch_org" \
+      HTS_MX_PROJECT="$project" HTS_MX_PATCH_PROJECT="$patch_project" \
+      HTS_MX_IDENTIFIER="$identifier" HTS_MX_PATCH_IDENTIFIER="$patch_id" \
+      HTS_MX_BRANCH="$branch" HTS_MX_PATCH_BRANCH="$patch_branch" \
+      HTS_MX_REPO="$repo" HTS_MX_PATCH_REPO="$patch_repo" \
+      HTS_MX_CONNECTOR="$connector" HTS_MX_PATCH_CONNECTOR="$patch_connector" \
+        hts_matrix_patch "$profile" "$module" "$alias"
+      ;;
     remove|rm)
       [[ -n "$alias" ]] || { hts_die "matrix remove requires --alias"; return 1; }
       hts_matrix_remove "$profile" "$module" "$alias"
       ;;
-    *) hts_die "usage: hts matrix list|add|remove"; return 1 ;;
+    *) hts_die "usage: hts matrix list|add|edit|remove"; return 1 ;;
   esac
 }
 
