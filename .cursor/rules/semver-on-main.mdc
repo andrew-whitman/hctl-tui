@@ -12,7 +12,7 @@ When creating a git commit that will land on `main` (commit on `main`, or on a b
 1. `pyproject.toml` → `[project] version = "X.Y.Z"`
 2. `src/hctl_tui/__init__.py` → `__version__ = "X.Y.Z"`
 
-Never bump one without the other.
+Never bump one without the other. Sync is enforced by the `check-version-sync` pre-commit hook (`scripts/check_version_sync.py`); install with `uv run --extra dev pre-commit install`.
 
 ## Bump rules (semver)
 

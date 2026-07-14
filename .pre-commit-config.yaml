@@ -1,0 +1,11 @@
+# Install: uv run pre-commit install
+# Run once: uv run pre-commit run --all-files
+repos:
+  - repo: local
+    hooks:
+      - id: check-version-sync
+        name: check package version sync
+        entry: python scripts/check_version_sync.py
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|src/hctl_tui/__init__\.py)$
