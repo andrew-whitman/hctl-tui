@@ -246,36 +246,37 @@ hts_tui_matrix_add() {
   fi
   hts_profile_use "$profile" >/dev/null
 
-  local module alias org project identifier trigger
+  local module alias org project identifier trigger mset
   module="$(hts_default_module)"
 
   hts_tui_clear
   {
     print -- "Add pipeline"
     print -- "profile=$profile  module=$module"
-    print -- "Five fields — then Run will execute the pipeline."
+    print -- "Six fields — then Run will execute the pipeline."
   } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
 
-  alias="$(hts_tui_ask "1/5 Alias" "short name")" || return 0
-  org="$(hts_tui_ask "2/5 Org" "orgIdentifier")" || return 0
-  project="$(hts_tui_ask "3/5 Project" "projectIdentifier")" || return 0
-  identifier="$(hts_tui_ask "4/5 Pipeline" "pipelineIdentifier")" || return 0
-  trigger="$(hts_tui_ask "5/5 Trigger" "triggerIdentifier")" || return 0
+  alias="$(hts_tui_ask "1/6 Alias" "short name")" || return 0
+  org="$(hts_tui_ask "2/6 Org" "orgIdentifier")" || return 0
+  project="$(hts_tui_ask "3/6 Project" "projectIdentifier")" || return 0
+  identifier="$(hts_tui_ask "4/6 Pipeline" "pipelineIdentifier")" || return 0
+  trigger="$(hts_tui_ask "5/6 Trigger" "triggerIdentifier")" || return 0
+  mset="$(hts_tui_ask "6/6 Set" "matrix set (e.g. shared)")" || return 0
 
-  [[ -n "$alias" && -n "$org" && -n "$project" && -n "$identifier" && -n "$trigger" ]] || {
-    hts_gum_box_error "All five fields are required."
+  [[ -n "$alias" && -n "$org" && -n "$project" && -n "$identifier" && -n "$trigger" && -n "$mset" ]] || {
+    hts_gum_box_error "All six fields are required."
     hts_tui_pause
     return 0
   }
 
-  hts_matrix_add "$profile" "$module" "$alias" "$trigger" "java" "shared" \
+  hts_matrix_add "$profile" "$module" "$alias" "$trigger" "java" "$mset" \
     "$org" "$project" "$identifier" "github" "" >/dev/null
   hts_tui_clear
   hts_gum_box \
     "Saved: $alias" \
     "$org / $project / $identifier" \
-    "trigger: $trigger"
+    "trigger: $trigger  set: $mset"
   hts_tui_pause "Enter — done"
 }
 
