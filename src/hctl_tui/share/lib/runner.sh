@@ -211,10 +211,11 @@ hts_fire_pipeline_execute() {
   input_set="$(hts_trim "$input_set")"
   branch="$(hts_trim "$branch")"
 
-  if ! hts_have hctl; then
-    hts_err "hctl is required — run: hts init"
+  local hctl_bin
+  hctl_bin="$(hts_hctl_bin)" || {
+    hts_err "hctl is required — run: hts init   (expected in ~/.local/bin)"
     return 1
-  fi
+  }
 
   if [[ -z "$account" ]]; then
     if [[ "$dry_run" == "1" ]]; then
@@ -227,7 +228,7 @@ hts_fire_pipeline_execute() {
   fi
 
   local -a cmd=(
-    hctl --profile "$profile"
+    "$hctl_bin" --profile "$profile"
     pipeline-execute post-pipeline-execute-with-input-set-yaml
     --account-identifier "$account"
     --org-identifier "$org"

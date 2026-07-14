@@ -18,6 +18,28 @@ hts_die()  { hts_err "$*"; return 1; }
 
 hts_have() { command -v "$1" >/dev/null 2>&1; }
 
+# Absolute path to hctl when PATH is sparse (uv installs into ~/.local/bin).
+hts_hctl_bin() {
+  local bin
+  bin="$(command -v hctl 2>/dev/null || true)"
+  if [[ -n "$bin" && -x "$bin" ]]; then
+    print -- "$bin"
+    return 0
+  fi
+  for bin in \
+    "${HTS_BIN_DIR:-$HOME/.local/bin}/hctl" \
+    "$HOME/.local/bin/hctl" \
+    /opt/homebrew/bin/hctl \
+    /usr/local/bin/hctl
+  do
+    if [[ -x "$bin" ]]; then
+      print -- "$bin"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Resolve common tools by PATH or absolute fallbacks (uv/launcher PATHs are often sparse).
 hts_cmd() {
   local name="$1"
