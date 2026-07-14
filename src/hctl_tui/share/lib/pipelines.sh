@@ -52,27 +52,36 @@ PY
 }
 
 hts_matrix_add() {
+  # optional 10th arg: type (github|custom), default github
+  # optional 11th arg: branch (for git-backed pipelines)
   local profile="$1" module="$2"
   local alias="$3" trigger="$4" tech="$5" set_="$6"
   local org="$7" project="$8" identifier="$9"
+  local etype="${10:-github}" branch="${11:-}"
   local path
   path="$(hts_matrix_ensure "$profile" "$module")"
-  hts_python - "$path" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" <<'PY'
+  hts_python - "$path" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" "$branch" <<'PY'
 import sys
-path, alias, trigger, tech, set_, org, project, identifier = sys.argv[1:9]
+path, alias, trigger, tech, set_, org, project, identifier, etype, branch = sys.argv[1:11]
 try:
     import yaml
 except ImportError:
     sys.stderr.write("PyYAML required for matrix writes (pip install pyyaml) or install mikefarah yq\n")
     sys.exit(1)
 
+etype = (etype or "github").strip().lower()
+if etype in ("webhook", "custom_webhook"):
+    etype = "custom"
+if etype not in ("github", "custom"):
+    etype = "github"
+
 data = yaml.safe_load(open(path)) or {}
 entries = list(data.get("entries") or [])
 # replace if alias exists
 entries = [e for e in entries if (e or {}).get("alias") != alias]
-entries.append({
+entry = {
     "alias": alias,
-    "trigger": trigger,
+    "type": etype,
     "tech": tech,
     "set": set_,
     "pipeline": {
@@ -80,12 +89,18 @@ entries.append({
         "project": project,
         "identifier": identifier,
     },
-})
+}
+if trigger:
+    # github: optional input set id; custom: required trigger identifier
+    entry["trigger"] = trigger
+if branch:
+    entry["branch"] = branch
+entries.append(entry)
 data["module"] = data.get("module") or "ci"
 data["entries"] = entries
 with open(path, "w") as f:
     yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
-print(f"added/updated entry: {alias}")
+print(f"added/updated entry: {alias} (type={etype})")
 PY
   # Ensure module field matches the matrix file we wrote
   hts_python - "$path" "$module" <<'PY' || true

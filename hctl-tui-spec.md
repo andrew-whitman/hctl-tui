@@ -4,9 +4,11 @@ TUI orchestration layer for triggering Harness CI/CD pipeline test suites via [h
 
 ## What it does
 
-One command (`hts`) to fire a configured test matrix of Harness **custom webhook triggers** across multiple pipelines, languages, and environments.
+One command (`hts`) to fire a configured test matrix across multiple pipelines, languages, and environments.
 
-hctl-tui does **not** mutate templates, commit, or push. It loads matrix config, filters entries, and calls `hctl` to POST each custom trigger.
+Default entry `type: github` **executes** the pipeline via the Harness NG execute API (correct for pipelines that normally start from GitHub webhooks). Optional `type: custom` POSTs a Harness custom webhook trigger.
+
+hctl-tui does **not** mutate templates, commit, or push.
 
 ## Core features
 
@@ -82,16 +84,17 @@ entries: []
 # Example entry shape:
 # entries:
 #   - alias: my-alias
-#     trigger: MY_TRIGGER_ID
+#     type: github          # default: pipeline execute
 #     tech: java
 #     set: shared
+#     # trigger: optional input set id (github) or custom trigger id (custom)
 #     pipeline:
 #       org: YOUR_ORG
 #       project: YOUR_PROJECT
 #       identifier: YOUR_PIPELINE_ID
 ```
 
-Each entry’s `trigger` is the Harness **custom trigger identifier** (`triggerIdentifier`). Org/project/pipeline come from the entry; account and API key come from the selected hctl profile — never from this matrix file.
+`type: github` executes the pipeline. `type: custom` uses `trigger` as `triggerIdentifier`. Org/project/pipeline come from the entry; account and API key come from the selected hctl profile.
 
 ## TUI flow
 
@@ -162,11 +165,9 @@ hts doctor
 
 1. Resolve active hctl profile (`--profile`, else `config.yaml` → `active_hctl_profile`, else hctl current).
 2. Load `matrices/<profile>/<module>.yaml`; apply `--tech` / `--set` / `--alias` filters.
-3. For each matching entry, invoke the Harness custom webhook via `hctl`:
-   - Prefer a generated operation discovered with `hctl api list --search webhook|trigger`.
-   - Fallback: authenticated POST to  
-     `/gateway/pipeline/api/webhook/custom/v2`  
-     with query params `accountIdentifier`, `orgIdentifier`, `projectIdentifier`, `pipelineIdentifier`, `triggerIdentifier`.
+3. For each matching entry:
+   - `type: github` → `POST /gateway/pipeline/api/pipeline/execute/{pipelineIdentifier}`
+   - `type: custom` → `POST /gateway/pipeline/api/webhook/custom/v2` with triggerIdentifier
 4. Collect success/fail; print a summary table.
 5. If `open_urls` / not `--no-open`, open returned `uiUrl`s (macOS `open`, Linux `xdg-open`).
 6. `--dry-run`: print resolved targets and the `hctl … --dry-run` / `--curl` preview without POSTing.

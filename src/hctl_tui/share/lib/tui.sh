@@ -233,7 +233,9 @@ hts_tui_profiles() {
 
 hts_tui_matrix_progress() {
   # Render progress card only (caller clears the screen first).
+  # Args: profile module alias trigger tech set org project identifier [type]
   local profile="$1" module="$2" alias="$3" trigger="$4" tech="$5" set_="$6" org="$7" project="$8" identifier="$9"
+  local etype="${10:-}"
   local line filled pending tw vw
 
   tw="$(hts_term_cols)"
@@ -243,8 +245,13 @@ hts_tui_matrix_progress() {
   filled=()
   pending=()
   [[ -n "$module" ]]     && filled+=("module:     $(hts_trunc "$module" "$vw")")     || pending+=("module")
+  [[ -n "$etype" ]]      && filled+=("type:       $(hts_trunc "$etype" "$vw")")      || pending+=("type")
   [[ -n "$alias" ]]      && filled+=("alias:      $(hts_trunc "$alias" "$vw")")      || pending+=("alias")
-  [[ -n "$trigger" ]]    && filled+=("trigger:    $(hts_trunc "$trigger" "$vw")")    || pending+=("trigger")
+  if [[ "$etype" == "custom" ]]; then
+    [[ -n "$trigger" ]]  && filled+=("trigger:    $(hts_trunc "$trigger" "$vw")")    || pending+=("trigger")
+  elif [[ -n "$etype" ]]; then
+    [[ -n "$trigger" ]]  && filled+=("input_set:  $(hts_trunc "$trigger" "$vw")")    || filled+=("input_set:  (none)")
+  fi
   [[ -n "$tech" ]]       && filled+=("tech:       $(hts_trunc "$tech" "$vw")")       || pending+=("tech")
   [[ -n "$set_" ]]       && filled+=("set:        $(hts_trunc "$set_" "$vw")")       || pending+=("set")
   [[ -n "$org" ]]        && filled+=("org:        $(hts_trunc "$org" "$vw")")        || pending+=("org")
@@ -276,53 +283,78 @@ hts_tui_matrix_progress() {
 
 hts_tui_matrix_prompt() {
   # Clear, show progress, ask one field.
-  # usage: hts_tui_matrix_prompt <var_name> <placeholder> profile module alias trigger tech set org project identifier
+  # usage: hts_tui_matrix_prompt <var_name> <placeholder> [--optional] profile module alias trigger tech set org project identifier [type]
   local __var="$1" __ph="$2"
   shift 2
+  local __optional=0
+  if [[ "${1:-}" == "--optional" ]]; then
+    __optional=1
+    shift
+  fi
   hts_tui_clear
   hts_tui_matrix_progress "$@"
   local __val
   __val="$(gum input --placeholder "$__ph")" || return 1
-  [[ -n "$__val" ]] || {
+  if [[ -z "$__val" && "$__optional" != "1" ]]; then
     hts_tui_clear
     hts_gum_box_error "${__var} is required."
     hts_tui_pause
     return 1
-  }
+  fi
   eval "${__var}=${(q)__val}"
 }
 
 hts_tui_matrix_add() {
   local profile="${1:-$(hts_active_profile)}"
-  local module="" alias="" trigger="" tech="" set_="" org="" project="" identifier=""
+  local module="" alias="" trigger="" tech="" set_="" org="" project="" identifier="" etype=""
 
   hts_tui_matrix_prompt module "module (e.g. ci, cd)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" || return 1
-  hts_tui_matrix_prompt alias "alias (short name for this matrix entry)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" || return 1
-  hts_tui_matrix_prompt trigger "trigger (Harness custom trigger identifier)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" || return 1
-  hts_tui_matrix_prompt tech "tech (e.g. java, go, python)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" || return 1
-  hts_tui_matrix_prompt set_ "set (e.g. shared, exclusive)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" || return 1
-  hts_tui_matrix_prompt org "pipeline org (Harness orgIdentifier)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" || return 1
-  hts_tui_matrix_prompt project "pipeline project (Harness projectIdentifier)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" || return 1
-  hts_tui_matrix_prompt identifier "pipeline identifier (Harness pipelineIdentifier)" \
-    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" || return 1
+    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
 
   hts_tui_clear
-  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
+  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype"
+  etype="$(
+    hts_gum_pick \
+      --height="$(hts_gum_choose_height)" \
+      --header "How should hts fire this pipeline?" \
+      "github — execute pipeline (GitHub / ad-hoc runs)" \
+      "custom — Harness custom webhook trigger"
+  )" || return 1
+  case "$etype" in
+    custom*) etype="custom" ;;
+    *) etype="github" ;;
+  esac
+
+  hts_tui_matrix_prompt alias "alias (short name for this matrix entry)" \
+    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
+  if [[ "$etype" == "custom" ]]; then
+    hts_tui_matrix_prompt trigger "custom trigger identifier (required)" \
+      "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
+  else
+    hts_tui_matrix_prompt trigger --optional "optional input set id (blank=none)" \
+      "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
+  fi
+  hts_tui_matrix_prompt tech "tech (e.g. java, go, python)" \
+    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
+  hts_tui_matrix_prompt set_ "set (e.g. shared, exclusive)" \
+    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
+  hts_tui_matrix_prompt org "pipeline org (Harness orgIdentifier)" \
+    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
+  hts_tui_matrix_prompt project "pipeline project (Harness projectIdentifier)" \
+    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
+  hts_tui_matrix_prompt identifier "pipeline identifier (Harness pipelineIdentifier)" \
+    "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
+
+  hts_tui_clear
+  hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype"
   gum confirm "Save this matrix entry?" || return 0
 
-  hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" >/dev/null
+  hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" >/dev/null
   hts_tui_clear
   local path_show
   path_show="$(hts_trunc "matrices/$profile/$module.yaml" "$(( $(hts_term_cols) - 8 ))")"
   hts_gum_box \
-    "$(hts_trunc "Saved $alias" "$(( $(hts_term_cols) - 8 ))")" "$path_show"
+    "$(hts_trunc "Saved $alias ($etype)" "$(( $(hts_term_cols) - 8 ))")" "$path_show"
   hts_tui_pause
 }
 

@@ -187,7 +187,8 @@ if cols < 72:
             print("-" * min(width, cols))
         rows = [
             ("alias", e.get("alias") or ""),
-            ("trigger", e.get("trigger") or ""),
+            ("type", e.get("type") or "github"),
+            ("trigger", e.get("trigger") or e.get("input_set") or ""),
             ("tech", e.get("tech") or ""),
             ("set", e.get("set") or ""),
             ("pipeline", pipeline(e)),
@@ -199,37 +200,35 @@ if cols < 72:
     raise SystemExit(0)
 
 # Wide: distribute columns to fit terminal
-# budgets for alias, trigger, tech, set; pipeline takes the rest
-headers = ["ALIAS", "TRIGGER", "TECH", "SET", "PIPELINE"]
-keys = ["alias", "trigger", "tech", "set", "pipeline"]
+headers = ["ALIAS", "TYPE", "TRIGGER", "TECH", "SET", "PIPELINE"]
 rows = []
 for e in entries:
     rows.append([
         str(e.get("alias") or ""),
-        str(e.get("trigger") or ""),
+        str(e.get("type") or "github"),
+        str(e.get("trigger") or e.get("input_set") or ""),
         str(e.get("tech") or ""),
         str(e.get("set") or ""),
         pipeline(e),
     ])
 
 # Natural widths (min of content / generous caps)
-caps = [20, 18, 10, 10, 60]
-mins = [5, 7, 4, 3, 8]
+caps = [16, 8, 16, 8, 8, 56]
+mins = [5, 4, 4, 3, 3, 8]
 natural = []
-for i in range(5):
+for i in range(6):
     w = len(headers[i])
     for r in rows:
         w = max(w, len(r[i]))
     natural.append(min(caps[i], max(mins[i], w)))
 
-# gaps: 4 spaces between 5 cols
+# gaps between 6 cols
 sep = 1
-avail = cols - sep * 4
+avail = cols - sep * 5
 total = sum(natural)
 if total > avail:
-    # Shrink from the right (pipeline first), then evenly
     overflow = total - avail
-    order = [4, 0, 1, 2, 3]
+    order = [5, 0, 2, 1, 3, 4]
     for i in order:
         if overflow <= 0:
             break
@@ -247,7 +246,7 @@ def fmt_row(vals):
     return (" " * sep).join(parts)
 
 print(fmt_row(headers))
-print("-" * min(cols, sum(widths) + sep * 4))
+print("-" * min(cols, sum(widths) + sep * 5))
 for r in rows:
     print(fmt_row(r))
 PY

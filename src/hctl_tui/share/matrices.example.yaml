@@ -1,15 +1,32 @@
 # Example matrix template.
 # Live files: ~/.config/hctl-tui/matrices/<hctl-profile>/<module>.yaml
 #
-# Fill in your Harness identifiers. Do not commit real API keys here
-# (auth belongs in ~/.config/hctl via `hts init` / `hctl init`).
+# type: github  (default) — execute the pipeline via Harness API
+#               (use this when pipelines are wired to GitHub triggers)
+# type: custom  — POST a Harness custom webhook trigger
+#
+# Auth belongs in ~/.config/hctl via `hts init` / `hctl init`.
 
 module: ci
 entries: []
-# Example entry shape (uncomment and edit):
+# Example (GitHub / pipeline execute):
 # entries:
 #   - alias: my-alias
-#     trigger: MY_TRIGGER_ID
+#     type: github
+#     tech: java
+#     set: shared
+#     # optional: input set id, git branch for remote pipelines
+#     # trigger: my_input_set
+#     # branch: main
+#     pipeline:
+#       org: YOUR_ORG
+#       project: YOUR_PROJECT
+#       identifier: YOUR_PIPELINE_ID
+#
+# Example (custom webhook):
+#   - alias: webhook-alias
+#     type: custom
+#     trigger: MY_CUSTOM_TRIGGER_ID
 #     tech: java
 #     set: shared
 #     pipeline:

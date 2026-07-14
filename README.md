@@ -1,8 +1,8 @@
 # hctl-tui
 
-Terminal UI / CLI that orchestrates Harness **custom webhook triggers** across a test matrix. Built on [`hctl`](https://github.com/ianmatson/harness-cli) (auth + API) and [`gum`](https://github.com/charmbracelet/gum) (prompts).
+Terminal UI / CLI that runs a Harness test matrix. Default mode **executes pipelines** (for pipelines that normally run from **GitHub triggers**). Optional `type: custom` still POSTs Harness custom webhooks. Built on [`hctl`](https://github.com/ianmatson/harness-cli) (auth) and [`gum`](https://github.com/charmbracelet/gum) (prompts).
 
-It does **not** edit templates, commit, or push — trigger-only orchestration.
+It does **not** edit templates, commit, or push.
 
 ## Install
 
@@ -55,7 +55,7 @@ hts run --module ci --dry-run
 hts run --module ci --tech java --set shared
 hts matrix list --module ci
 hts matrix add --module ci \
-  --alias my-alias --trigger MY_TRIGGER \
+  --type github --alias my-alias \
   --tech java --set shared \
   --pipeline-org YOUR_ORG --pipeline-project YOUR_PROJECT --pipeline-id YOUR_PIPELINE_ID
 hts matrix remove --module ci --alias my-alias

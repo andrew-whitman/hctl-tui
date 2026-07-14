@@ -1,8 +1,8 @@
-# Matrix runner: filter + fire Harness custom webhook triggers.
+# Matrix runner: filter + fire pipelines (GitHub-style execute or custom webhooks).
 # shellcheck shell=zsh
 
 # Discover a usable hctl op for custom webhooks (cached in-process).
-# Real fires prefer curl (matches Harness docs); hctl op is optional/dry-run only.
+# Real custom fires prefer curl; hctl op is optional/dry-run only.
 typeset -g HTS_WEBHOOK_OP=""
 
 hts_discover_webhook_op() {
@@ -24,8 +24,26 @@ hts_urlencode() {
   hts_python -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
 }
 
+hts_module_type() {
+  # Map matrix module name → Harness moduleType query value
+  local m="${1:l}"
+  case "$m" in
+    ci|build) print CI ;;
+    cd|deploy*) print CD ;;
+    *) print "${1:u}" ;;
+  esac
+}
+
+hts_entry_type() {
+  # github (pipeline execute) | custom (custom webhook). Default: github.
+  local t="${1:l}"
+  case "$t" in
+    custom|webhook|custom_webhook) print custom ;;
+    github|execute|pipeline|""|*) print github ;;
+  esac
+}
+
 hts_trigger_status() {
-  # stdin: JSON body → print status or ERROR
   hts_python -c '
 import json,sys
 raw=sys.stdin.read()
@@ -34,12 +52,20 @@ try:
 except Exception:
     print("ERROR")
     raise SystemExit(0)
-print(d.get("status") or "ERROR")
+st = d.get("status")
+if st:
+    print(st)
+    raise SystemExit(0)
+# execute responses sometimes omit top-level status when planExecution is present
+data = d.get("data") or {}
+if data.get("planExecution") or data.get("planExecutionId"):
+    print("SUCCESS")
+else:
+    print("ERROR")
 ' 2>/dev/null || print ERROR
 }
 
 hts_trigger_message() {
-  # stdin: JSON body → short human message
   hts_python -c '
 import json,sys
 raw=sys.stdin.read()
@@ -63,20 +89,41 @@ print(msg or "")
 }
 
 hts_trigger_ui_url() {
-  hts_python -c '
-import json,sys
+  # Args (optional): host account org project pipeline
+  local host="${1:-}" account="${2:-}" org="${3:-}" project="${4:-}" pipeline="${5:-}"
+  HTS_UI_HOST="$host" HTS_UI_ACCOUNT="$account" HTS_UI_ORG="$org" \
+    HTS_UI_PROJECT="$project" HTS_UI_PIPELINE="$pipeline" \
+    hts_python -c '
+import json, os, sys
+raw = sys.stdin.read()
 try:
-    d=json.loads(sys.stdin.read())
-    print((d.get("data") or {}).get("uiUrl") or "")
+    d = json.loads(raw)
 except Exception:
+    print("")
+    raise SystemExit(0)
+data = d.get("data") if isinstance(d.get("data"), dict) else {}
+for key in ("uiUrl", "ui_url"):
+    if d.get(key):
+        print(d[key]); raise SystemExit(0)
+    if data.get(key):
+        print(data[key]); raise SystemExit(0)
+pe = data.get("planExecution") if isinstance(data.get("planExecution"), dict) else {}
+ex_id = pe.get("uuid") or data.get("planExecutionId") or data.get("executionId") or ""
+host = (os.environ.get("HTS_UI_HOST") or "https://app.harness.io").rstrip("/")
+acct = os.environ.get("HTS_UI_ACCOUNT") or ""
+org = os.environ.get("HTS_UI_ORG") or ""
+proj = os.environ.get("HTS_UI_PROJECT") or ""
+pipe = os.environ.get("HTS_UI_PIPELINE") or ""
+if ex_id and acct and org and proj and pipe:
+    print("{}/ng/account/{}/home/orgs/{}/projects/{}/pipelines/{}/executions/{}/pipeline".format(
+        host, acct, org, proj, pipe, ex_id))
+else:
     print("")
 ' 2>/dev/null || true
 }
 
 hts_fire_custom_trigger() {
   # Args: profile org project pipeline_id trigger_id dry_run(0|1)
-  # Prints response body on stdout. Exit 0 when HTTP transport succeeded
-  # (even if Harness status is ERROR/FAILURE). Exit 1 only on transport failure.
   local profile="$1" org="$2" project="$3" pipeline_id="$4" trigger_id="$5" dry_run="${6:-0}"
   local host account api_key
   host="$(hts_hctl_profile_field "$profile" host)"
@@ -84,6 +131,13 @@ hts_fire_custom_trigger() {
   api_key="$(hts_hctl_profile_field "$profile" api_key)"
   host="${host:-https://app.harness.io}"
   host="${host%/}"
+  host="${host%/gateway}"
+
+  org="$(hts_trim "$org")"
+  project="$(hts_trim "$project")"
+  pipeline_id="$(hts_trim "$pipeline_id")"
+  trigger_id="$(hts_trim "$trigger_id")"
+  account="$(hts_trim "$account")"
 
   if [[ -z "$account" ]]; then
     if [[ "$dry_run" == "1" ]]; then
@@ -104,24 +158,13 @@ hts_fire_custom_trigger() {
   url="${host}/gateway/pipeline/api/webhook/custom/v2?accountIdentifier=$(hts_urlencode "$account")&orgIdentifier=$(hts_urlencode "$org")&projectIdentifier=$(hts_urlencode "$project")&pipelineIdentifier=$(hts_urlencode "$pipeline_id")&triggerIdentifier=$(hts_urlencode "$trigger_id")"
 
   if [[ "$dry_run" == "1" ]]; then
-    print -u2 -- "DRY-RUN POST $url"
+    print -u2 -- "DRY-RUN POST (custom webhook) $url"
+    print -u2 -- "  account=$account host=$host"
     print -u2 -- "  headers: content-type: application/json, X-Api-Key: ***"
     print -u2 -- "  body: {}"
-    if hts_discover_webhook_op; then
-      hctl --profile "$profile" api call "$HTS_WEBHOOK_OP" \
-        --query "accountIdentifier=$account" \
-        --query "orgIdentifier=$org" \
-        --query "projectIdentifier=$project" \
-        --query "pipelineIdentifier=$pipeline_id" \
-        --query "triggerIdentifier=$trigger_id" \
-        --body-json '{}' \
-        --dry-run 2>&1 | print -u2 -- || true
-    fi
     return 0
   fi
 
-  # Prefer curl — same contract as Harness "Copy as cURL". hctl op discovery is
-  # best-effort and often selects the wrong OpenAPI operation.
   local resp http_code=0 curl_ec=0
   resp="$(
     hts_curl -sS -X POST \
@@ -146,12 +189,109 @@ hts_fire_custom_trigger() {
   fi
 
   print -- "$resp"
-
-  # Transport ok if we got a body; 401/403 still return JSON we want the caller to show.
   if [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
     hts_err "Harness auth failed (HTTP $http_code) — check api_key on profile '$profile'"
   fi
   return 0
+}
+
+hts_fire_pipeline_execute() {
+  # Args: profile org project pipeline_id module dry_run [input_set] [branch]
+  # Executes pipeline via NG API (use this for GitHub-triggered pipelines).
+  local profile="$1" org="$2" project="$3" pipeline_id="$4" module="$5" dry_run="${6:-0}"
+  local input_set="${7:-}" branch="${8:-}"
+  local host account api_key module_type
+  host="$(hts_hctl_profile_field "$profile" host)"
+  account="$(hts_hctl_profile_field "$profile" account)"
+  api_key="$(hts_hctl_profile_field "$profile" api_key)"
+  host="${host:-https://app.harness.io}"
+  host="${host%/}"
+  host="${host%/gateway}"
+  module_type="$(hts_module_type "$module")"
+
+  org="$(hts_trim "$org")"
+  project="$(hts_trim "$project")"
+  pipeline_id="$(hts_trim "$pipeline_id")"
+  account="$(hts_trim "$account")"
+  input_set="$(hts_trim "$input_set")"
+  branch="$(hts_trim "$branch")"
+
+  if [[ -z "$account" ]]; then
+    if [[ "$dry_run" == "1" ]]; then
+      account="ACCOUNT"
+      hts_log "warn: profile '$profile' has no account (dry-run placeholder)"
+    else
+      hts_err "profile '$profile' has no account — run: hctl init --profile $profile"
+      return 1
+    fi
+  fi
+  if [[ "$dry_run" != "1" && -z "$api_key" && -z "${HARNESS_API_KEY:-}" ]]; then
+    hts_err "no API key for profile '$profile' (set in hctl or HARNESS_API_KEY)"
+    return 1
+  fi
+  api_key="${api_key:-${HARNESS_API_KEY:-}}"
+
+  local url
+  url="${host}/gateway/pipeline/api/pipeline/execute/$(hts_urlencode "$pipeline_id")?accountIdentifier=$(hts_urlencode "$account")&orgIdentifier=$(hts_urlencode "$org")&projectIdentifier=$(hts_urlencode "$project")&moduleType=$(hts_urlencode "$module_type")"
+  [[ -n "$branch" ]] && url+="&branch=$(hts_urlencode "$branch")"
+  [[ -n "$input_set" ]] && url+="&inputSetIdentifiers=$(hts_urlencode "$input_set")"
+
+  if [[ "$dry_run" == "1" ]]; then
+    print -u2 -- "DRY-RUN POST (pipeline execute / github) $url"
+    print -u2 -- "  account=$account host=$host moduleType=$module_type"
+    print -u2 -- "  org=$org project=$project pipeline=$pipeline_id"
+    [[ -n "$input_set" ]] && print -u2 -- "  inputSet=$input_set"
+    [[ -n "$branch" ]] && print -u2 -- "  branch=$branch"
+    print -u2 -- "  headers: content-type: application/yaml, X-Api-Key: ***"
+    print -u2 -- "  body: (empty yaml)"
+    return 0
+  fi
+
+  local resp http_code=0 curl_ec=0
+  # Empty YAML body is accepted when the pipeline has no required runtime inputs.
+  resp="$(
+    hts_curl -sS -X POST \
+      -H 'content-type: application/yaml' \
+      -H "X-Api-Key: ${api_key}" \
+      --url "$url" \
+      -d '' \
+      -w $'\n%{http_code}'
+  )" || curl_ec=$?
+
+  if (( curl_ec != 0 )); then
+    hts_err "curl failed (exit $curl_ec) executing pipeline"
+    return 1
+  fi
+
+  http_code="${resp##*$'\n'}"
+  resp="${resp%$'\n'*}"
+
+  if [[ -z "$resp" ]]; then
+    hts_err "empty response from Harness (HTTP ${http_code:-?})"
+    return 1
+  fi
+
+  print -- "$resp"
+  if [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
+    hts_err "Harness auth failed (HTTP $http_code) — check api_key on profile '$profile'"
+  fi
+  return 0
+}
+
+hts_fire_entry() {
+  # Args: profile module type org project pipeline_id trigger_or_inputset dry_run [branch]
+  local profile="$1" module="$2" etype="$3" org="$4" project="$5" pipeline_id="$6"
+  local trigger="$7" dry_run="${8:-0}" branch="${9:-}"
+  etype="$(hts_entry_type "$etype")"
+  case "$etype" in
+    custom)
+      hts_fire_custom_trigger "$profile" "$org" "$project" "$pipeline_id" "$trigger" "$dry_run"
+      ;;
+    *)
+      # github / execute: optional input set via trigger field
+      hts_fire_pipeline_execute "$profile" "$org" "$project" "$pipeline_id" "$module" "$dry_run" "$trigger" "$branch"
+      ;;
+  esac
 }
 
 hts_run_matrix() {
@@ -197,17 +337,25 @@ hts_run_matrix() {
     fi
   fi
 
+  local host account
+  host="$(hts_hctl_profile_field "$profile" host)"
+  account="$(hts_hctl_profile_field "$profile" account)"
+  host="${host:-https://app.harness.io}"
+  host="${host%/}"
+  host="${host%/gateway}"
+
   hts_log "profile=$profile module=$module entries=$count dry_run=$dry_run"
 
   local ok=0 fail=0
   local results=()
-  local line alias trigger org project pid resp ui_url trig_status trig_msg fire_ec
+  local alias trigger org project pid etype branch resp ui_url trig_status trig_msg fire_ec
 
-  while IFS=$'\t' read -r alias trigger org project pid; do
+  while IFS=$'\t' read -r alias etype trigger org project pid branch; do
     [[ -n "$alias" ]] || continue
-    hts_log "→ $alias  trigger=$trigger  pipeline=$org/$project/$pid"
+    etype="$(hts_entry_type "$etype")"
+    hts_log "→ $alias  type=$etype  pipeline=$org/$project/$pid  trigger/inputSet=${trigger:-(-)}"
     fire_ec=0
-    resp="$(hts_fire_custom_trigger "$profile" "$org" "$project" "$pid" "$trigger" "$dry_run")" || fire_ec=$?
+    resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "$dry_run" "$branch")" || fire_ec=$?
     if [[ "$dry_run" == "1" ]]; then
       trig_status="DRY-RUN"
       ui_url=""
@@ -216,11 +364,11 @@ hts_run_matrix() {
       trig_status="ERROR"
       ui_url=""
       fail=$((fail + 1))
-      hts_err "trigger transport error for $alias (see above)"
+      hts_err "transport error for $alias (see above)"
     else
       trig_status="$(print -- "$resp" | hts_trigger_status)"
       trig_msg="$(print -- "$resp" | hts_trigger_message)"
-      ui_url="$(print -- "$resp" | hts_trigger_ui_url)"
+      ui_url="$(print -- "$resp" | hts_trigger_ui_url "$host" "$account" "$org" "$project" "$pid")"
       if [[ "$trig_status" == "SUCCESS" ]]; then
         ok=$((ok + 1))
         if [[ "$open_urls" == "1" && -n "$ui_url" ]]; then
@@ -229,9 +377,9 @@ hts_run_matrix() {
       else
         fail=$((fail + 1))
         if [[ -n "$trig_msg" ]]; then
-          hts_err "trigger $trig_status for $alias: $trig_msg"
+          hts_err "$trig_status for $alias: $trig_msg"
         else
-          hts_err "trigger $trig_status for $alias: $resp"
+          hts_err "$trig_status for $alias: $resp"
         fi
       fi
     fi
@@ -242,10 +390,12 @@ for e in json.load(sys.stdin):
     p=e.get("pipeline") or {}
     print("\t".join([
         str(e.get("alias") or ""),
-        str(e.get("trigger") or ""),
+        str(e.get("type") or "github"),
+        str(e.get("trigger") or e.get("input_set") or ""),
         str(p.get("org") or ""),
         str(p.get("project") or ""),
         str(p.get("identifier") or ""),
+        str(e.get("branch") or ""),
     ]))
 ')
 
