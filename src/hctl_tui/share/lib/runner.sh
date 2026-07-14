@@ -9,12 +9,12 @@ hts_discover_webhook_op() {
   [[ -n "$HTS_WEBHOOK_OP" ]] && return 0
   hts_have hctl || return 1
   local hits
-  hits="$(hctl api list --search 'webhook custom' 2>/dev/null || true)"
+  hits="$(hts_hctl api list --search 'webhook custom' 2>/dev/null || true)"
   local op
-  op="$(print -- "$hits" | awk '/custom.*webhook|webhook.*custom|trigger.*webhook/ {print $1; exit}' || true)"
+  op="$(print -- "$hits" | hts_cmd awk '/custom.*webhook|webhook.*custom|trigger.*webhook/ {print $1; exit}' || true)"
   if [[ -z "$op" ]]; then
-    hits="$(hctl api list --search webhook 2>/dev/null || true)"
-    op="$(print -- "$hits" | awk 'NR>1 {print $1; exit}' || true)"
+    hits="$(hts_hctl api list --search webhook 2>/dev/null || true)"
+    op="$(print -- "$hits" | hts_cmd awk 'NR>1 {print $1; exit}' || true)"
   fi
   HTS_WEBHOOK_OP="$op"
   [[ -n "$HTS_WEBHOOK_OP" ]]
@@ -261,7 +261,7 @@ hts_fire_pipeline_execute() {
   if (( ec != 0 )); then
     local err
     err="$(/bin/cat "$errfile" 2>/dev/null || true)"
-    rm -f "$errfile"
+    hts_rm -f "$errfile"
     if [[ -n "$resp" ]]; then
       print -- "$resp"
       local msg
@@ -273,7 +273,7 @@ hts_fire_pipeline_execute() {
       hts_err "hctl execute failed (exit $ec) for $org/$project/$pipeline_id"
     return 1
   fi
-  rm -f "$errfile"
+  hts_rm -f "$errfile"
 
   if [[ -z "$resp" ]]; then
     hts_err "empty response from hctl pipeline-execute"

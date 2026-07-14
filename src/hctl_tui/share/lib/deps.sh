@@ -11,6 +11,11 @@ hts_user_bin_dir() {
 }
 
 hts_path_prepend_user_bin() {
+  # Prefer the shared PATH bootstrap (system bins + user bins).
+  if typeset -f hts_ensure_path >/dev/null 2>&1; then
+    hts_ensure_path
+    return 0
+  fi
   local d
   d="$(hts_user_bin_dir)"
   /bin/mkdir -p "$d"
@@ -18,7 +23,6 @@ hts_path_prepend_user_bin() {
     *":$d:"*) ;;
     *) export PATH="$d:$PATH" ;;
   esac
-  # uv tool installs often land here too
   if [[ -d "$HOME/.cargo/bin" ]]; then
     case ":$PATH:" in
       *":$HOME/.cargo/bin:"*) ;;
@@ -33,7 +37,7 @@ hts_have_uv() {
 
 hts_install_uv() {
   if hts_have_uv; then
-    hts_log "✓ uv: $(uv --version 2>/dev/null | head -1)"
+    hts_log "✓ uv: $(uv --version 2>/dev/null | hts_cmd head -1)"
     return 0
   fi
   hts_log "→ installing uv (needed for hctl)…"
@@ -41,15 +45,8 @@ hts_install_uv() {
     brew install uv && return 0
   fi
   if hts_have curl || [[ -x /usr/bin/curl ]]; then
-    hts_curl -LsSf https://astral.sh/uv/install.sh | sh
+    hts_curl -LsSf https://astral.sh/uv/install.sh | hts_cmd sh
     hts_path_prepend_user_bin
-    # official installer may put uv in ~/.local/bin or ~/.cargo/bin
-    if [[ -x "$HOME/.local/bin/uv" ]]; then
-      export PATH="$HOME/.local/bin:$PATH"
-    fi
-    if [[ -x "$HOME/.cargo/bin/uv" ]]; then
-      export PATH="$HOME/.cargo/bin:$PATH"
-    fi
     hts_have_uv && return 0
   fi
   hts_err "could not install uv — install manually: https://docs.astral.sh/uv/"
@@ -58,15 +55,15 @@ hts_install_uv() {
 
 hts_install_hctl() {
   if hts_have hctl; then
-    hts_log "✓ hctl: $(hctl --version 2>/dev/null | head -1 || print installed)"
+    hts_log "✓ hctl: $(hts_hctl --version 2>/dev/null | hts_cmd head -1 || print installed)"
     # Older installs lack `hctl config profile` — refresh via uv when possible
     local supports=0
-    if hctl config profile list >/dev/null 2>&1; then
+    if hts_hctl config profile list >/dev/null 2>&1; then
       supports=1
     else
       local probe
-      probe="$(hctl config profile list 2>&1 || true)"
-      if ! print -- "$probe" | grep -qi 'Unknown config action: *profile'; then
+      probe="$(hts_hctl config profile list 2>&1 || true)"
+      if ! print -- "$probe" | hts_cmd grep -qi 'Unknown config action: *profile'; then
         # Subcommand exists; other errors (empty config) are fine
         supports=1
       fi
@@ -80,8 +77,8 @@ hts_install_hctl() {
         done
         hts_path_prepend_user_bin
       fi
-      if hctl config profile list >/dev/null 2>&1 || \
-         ! hctl config profile list 2>&1 | grep -qi 'Unknown config action: *profile'; then
+      if hts_hctl config profile list >/dev/null 2>&1 || \
+         ! hts_hctl config profile list 2>&1 | hts_cmd grep -qi 'Unknown config action: *profile'; then
         hts_log "✓ hctl upgraded"
       else
         hts_log "warn: hctl still lacks config profile — hts will use config.json directly"
@@ -120,8 +117,8 @@ hts_install_hctl() {
 
 hts_gum_asset_triple() {
   local os arch
-  os="$(uname -s)"
-  arch="$(uname -m)"
+  os="$(hts_cmd uname -s)"
+  arch="$(hts_cmd uname -m)"
   case "$os" in
     Darwin) os=Darwin ;;
     Linux)  os=Linux ;;
@@ -170,16 +167,16 @@ hts_install_gum_from_github() {
     /bin/rm -rf "$tmp"
     return 1
   fi
-  tar -xzf "$tmp/gum.tgz" -C "$tmp"
+  hts_cmd tar -xzf "$tmp/gum.tgz" -C "$tmp"
   local bin
-  bin="$(/usr/bin/find "$tmp" -type f -name gum 2>/dev/null | head -1)"
+  bin="$(hts_cmd find "$tmp" -type f -name gum 2>/dev/null | hts_cmd head -1)"
   if [[ -z "$bin" || ! -f "$bin" ]]; then
     hts_err "gum binary missing from release archive"
     /bin/rm -rf "$tmp"
     return 1
   fi
   /bin/cp "$bin" "$dest/gum"
-  chmod +x "$dest/gum"
+  hts_cmd chmod +x "$dest/gum"
   /bin/rm -rf "$tmp"
   hts_path_prepend_user_bin
   hts_have gum
@@ -187,7 +184,7 @@ hts_install_gum_from_github() {
 
 hts_install_gum() {
   if hts_have gum; then
-    hts_log "✓ gum: $(gum --version 2>/dev/null | head -1 || print installed)"
+    hts_log "✓ gum: $(hts_gum --version 2>/dev/null | hts_cmd head -1 || print installed)"
     return 0
   fi
   hts_log "→ installing gum…"
@@ -207,9 +204,9 @@ hts_install_gum() {
 hts_deps_status() {
   hts_path_prepend_user_bin
   print -- "zsh:  $(hts_have zsh && print ok || print MISSING)"
-  print -- "uv:   $(hts_have uv && uv --version 2>/dev/null | head -1 || print MISSING)"
-  print -- "hctl: $(hts_have hctl && (hctl --version 2>/dev/null | head -1 || print ok) || print MISSING)"
-  print -- "gum:  $(hts_have gum && (gum --version 2>/dev/null | head -1 || print ok) || print MISSING)"
+  print -- "uv:   $(hts_have uv && uv --version 2>/dev/null | hts_cmd head -1 || print MISSING)"
+  print -- "hctl: $(hts_have hctl && (hts_hctl --version 2>/dev/null | hts_cmd head -1 || print ok) || print MISSING)"
+  print -- "gum:  $(hts_have gum && (hts_gum --version 2>/dev/null | hts_cmd head -1 || print ok) || print MISSING)"
   print -- "curl: $(hts_have curl && print ok || print MISSING)"
   if hts_python -c 'import yaml' >/dev/null 2>&1; then
     print -- "yaml: PyYAML ok"

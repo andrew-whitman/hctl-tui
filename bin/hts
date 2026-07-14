@@ -1,8 +1,22 @@
-#!/usr/bin/env zsh
+#!/bin/zsh
 # Local checkout launcher — prefers packaged share next to this repo.
+emulate -L zsh
 set -euo pipefail
+
+# Force a usable PATH before looking up anything (uv/GUI launches are sparse).
+_hts_sys="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
+_hts_user=""
+[[ -n "${HOME:-}" && -d "$HOME/.local/bin" ]] && _hts_user="$HOME/.local/bin"
+[[ -n "${HOME:-}" && -d "$HOME/.cargo/bin" ]] && _hts_user="${_hts_user:+$_hts_user:}$HOME/.cargo/bin"
+export PATH="${_hts_user:+$_hts_user:}${_hts_sys}${PATH:+:$PATH}"
+unset _hts_sys _hts_user
+
 ROOT="$(cd -- "${0:A:h}/.." && pwd)"
 SHARE="$ROOT/src/hctl_tui/share"
 export HTS_ROOT="$SHARE"
 export HTS_LIB="$SHARE/lib"
-exec zsh "$SHARE/bin/hts" "$@"
+
+zsh_bin=/bin/zsh
+[[ -x $zsh_bin ]] || zsh_bin=/usr/bin/zsh
+[[ -x $zsh_bin ]] || zsh_bin="$(command -v zsh)"
+exec "$zsh_bin" "$SHARE/bin/hts" "$@"

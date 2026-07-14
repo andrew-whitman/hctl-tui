@@ -23,7 +23,7 @@ hts_tui_clear() {
 hts_tui_pause() {
   local msg="${1:-Press Enter}"
   print -- "" >/dev/tty 2>/dev/null || print -- ""
-  gum input --placeholder "$msg" --value "" >/dev/null || true
+  hts_gum input --placeholder "$msg" --value "" >/dev/null || true
 }
 
 hts_gum_choose_height() {
@@ -38,17 +38,17 @@ hts_gum_choose_height() {
 hts_gum_pick() {
   unsetopt xtrace verbose 2>/dev/null || true
   if [[ -r /dev/tty ]]; then
-    gum choose "$@" </dev/tty
+    hts_gum choose "$@" </dev/tty
   else
-    gum choose "$@"
+    hts_gum choose "$@"
   fi
 }
 
 hts_gum_input() {
   if [[ -r /dev/tty ]]; then
-    gum input "$@" </dev/tty
+    hts_gum input "$@" </dev/tty
   else
-    gum input "$@"
+    hts_gum input "$@"
   fi
 }
 
@@ -170,7 +170,7 @@ hts_tui_run_suite() {
 
   if (( ${#modules[@]} == 0 )); then
     hts_tui_clear
-    if gum confirm "No pipelines yet. Add one now?"; then
+    if hts_gum confirm "No pipelines yet. Add one now?"; then
       hts_tui_matrix_add "$profile" || return 0
     fi
     return 0
@@ -199,7 +199,7 @@ hts_tui_run_suite() {
       set_="$(hts_gum_input --placeholder "set (blank=any)")" || return 0
       aliases="$(hts_gum_input --placeholder "aliases comma-separated (blank=any)")" || return 0
       hts_tui_clear
-      if gum confirm --default=false "Dry-run only?"; then
+      if hts_gum confirm --default=false "Dry-run only?"; then
         dry_run=1
       fi
       ;;
@@ -221,7 +221,7 @@ hts_tui_run_suite() {
     hts_preview_matrix "$profile" "$module" "$tech" "$set_" "$aliases"
   } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
-  gum confirm "Continue?" || return 0
+  hts_gum confirm "Continue?" || return 0
 
   hts_tui_clear
   hts_run_matrix "$profile" "$module" "$tech" "$set_" "$aliases" "$dry_run" "$open_urls"
@@ -328,7 +328,7 @@ for e in json.load(sys.stdin):
 
   hts_tui_clear
   alias="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Remove alias" "${aliases[@]}")" || return 0
-  gum confirm "Delete '$alias'?" || return 0
+  hts_gum confirm "Delete '$alias'?" || return 0
   hts_matrix_remove "$profile" "$module" "$alias" >/dev/null
   hts_tui_clear
   hts_gum_box "Removed: $alias"
@@ -374,7 +374,7 @@ hts_tui_profiles() {
         ;;
       "Doctor")
         hts_tui_clear
-        hts_profile_doctor | gum pager
+        hts_profile_doctor | hts_gum pager
         ;;
       Back|*) return 0 ;;
     esac

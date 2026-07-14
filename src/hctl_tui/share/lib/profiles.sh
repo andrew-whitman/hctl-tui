@@ -7,10 +7,10 @@ hts_hctl_supports_config_profile() {
   hts_have hctl || return 1
   # Prefer a cheap probe; older hctl returns non-zero / that error string.
   local out
-  out="$(hctl config profile list 2>&1)" && return 0
-  print -- "$out" | grep -qi 'Unknown config action: *profile' && return 1
+  out="$(hts_hctl config profile list 2>&1)" && return 0
+  print -- "$out" | hts_cmd grep -qi 'Unknown config action: *profile' && return 1
   # Other errors (no config yet) still indicate the subcommand exists
-  print -- "$out" | grep -qi 'usage:\|config profile\|No such file\|not found\|no profile\|profiles' && return 0
+  print -- "$out" | hts_cmd grep -qi 'usage:\|config profile\|No such file\|not found\|no profile\|profiles' && return 0
   return 1
 }
 
@@ -57,7 +57,7 @@ PY
 
 hts_profile_list() {
   if hts_have hctl && hts_hctl_supports_config_profile; then
-    if hctl config profile list "$@"; then
+    if hts_hctl config profile list "$@"; then
       return 0
     fi
   elif hts_have hctl; then
@@ -87,7 +87,7 @@ hts_profile_use() {
     return 1
   fi
   if hts_have hctl && hts_hctl_supports_config_profile; then
-    hctl config profile use "$name" || hts_profile_use_in_file "$name"
+    hts_hctl config profile use "$name" || hts_profile_use_in_file "$name"
   else
     hts_profile_use_in_file "$name"
   fi
@@ -101,9 +101,9 @@ hts_profile_init() {
   local name="${1:-}"
   if hts_have hctl; then
     if [[ -n "$name" ]]; then
-      hctl init --profile "$name"
+      hts_hctl init --profile "$name"
     else
-      hctl init
+      hts_hctl init
     fi
     # Sync active pointer from hctl
     local cur
@@ -126,7 +126,7 @@ hts_profile_doctor() {
       hts_log "note: hctl is outdated (no 'config profile' support)"
       hts_log "upgrade: uv tool install --force git+https://github.com/ianmatson/harness-cli.git"
     fi
-    hctl --profile "$profile" doctor "$@"
+    hts_hctl --profile "$profile" doctor "$@"
   else
     hts_die "hctl not found"
   fi

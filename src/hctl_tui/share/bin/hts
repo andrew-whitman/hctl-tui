@@ -1,4 +1,4 @@
-#!/usr/bin/env zsh
+#!/bin/zsh
 # hts — hctl-tui entrypoint
 emulate -L zsh
 set -euo pipefail
@@ -6,11 +6,20 @@ set -euo pipefail
 # into the TUI on every assignment — never want that in the interactive UI.
 unsetopt xtrace verbose 2>/dev/null || true
 
-# Ensure a sane PATH (some environments start nearly empty)
-export PATH="${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
-# uv tool installs (hctl, hts) land here — must be present for every invocation, not just init
-[[ -d "${HOME:-}/.local/bin" ]] && export PATH="${HOME}/.local/bin:$PATH"
-[[ -d "${HOME:-}/.cargo/bin" ]] && export PATH="${HOME}/.cargo/bin:$PATH"
+# ---------------------------------------------------------------------------
+# PATH bootstrap (MUST be first real work)
+#
+# `uv tool run` / GUI launches often inherit a PATH that omits /bin and
+# /usr/bin entirely. That makes bare `rm`, `mktemp`, `cat`, etc. fail with
+# "command not found" even though the binaries exist. Always put system +
+# uv-tool bins at the front. (${PATH:-default} does NOT treat PATH="" as unset.)
+# ---------------------------------------------------------------------------
+_hts_sys="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
+_hts_user=""
+[[ -n "${HOME:-}" && -d "$HOME/.local/bin" ]] && _hts_user="$HOME/.local/bin"
+[[ -n "${HOME:-}" && -d "$HOME/.cargo/bin" ]] && _hts_user="${_hts_user:+$_hts_user:}$HOME/.cargo/bin"
+export PATH="${_hts_user:+$_hts_user:}${_hts_sys}${PATH:+:$PATH}"
+unset _hts_sys _hts_user
 
 # HTS_ROOT / HTS_LIB may be injected by the Python uv entrypoint or local bin/hts.
 : "${HTS_ROOT:=$(cd -- "${0:A:h}/.." && pwd)}"
@@ -23,8 +32,8 @@ source "$HTS_LIB/pipelines.sh"
 source "$HTS_LIB/runner.sh"
 source "$HTS_LIB/tui.sh"
 
-# Prefer user-local bins after deps helper exists (mkdir + PATH de-dupe)
-hts_path_prepend_user_bin
+# Re-assert PATH after libs (mkdir user bin + de-dupe)
+hts_ensure_path
 
 hts_usage() {
   /bin/cat <<'EOF'

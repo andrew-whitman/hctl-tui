@@ -5,7 +5,37 @@ HTS_CONFIG_DIR="${HTS_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/hctl-tui}"
 HTS_CONFIG_FILE="${HTS_CONFIG_DIR}/config.yaml"
 HTS_MATRICES_DIR="${HTS_CONFIG_DIR}/matrices"
 HTS_HCTL_CONFIG="${HARNESS_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hctl/config.json}"
-HTS_PYTHON="${HTS_PYTHON:-$(command -v python3 2>/dev/null || command -v python 2>/dev/null || print /usr/bin/python3)}"
+HTS_PYTHON="${HTS_PYTHON:-}"
+
+# Force system + uv-tool bins onto PATH. Safe to call repeatedly.
+# uv / GUI launches often omit /bin and /usr/bin (bare rm/mktemp then fail).
+hts_ensure_path() {
+  case ":${PATH}:" in
+    *:/bin:*|*:/usr/bin:*) ;;
+    *) export PATH="/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}" ;;
+  esac
+  case ":${PATH}:" in
+    *:/opt/homebrew/bin:*|*:/usr/local/bin:*) ;;
+    *) export PATH="/opt/homebrew/bin:/usr/local/bin:${PATH}" ;;
+  esac
+  local d="${HTS_BIN_DIR:-}"
+  if [[ -z "$d" && -n "${HOME:-}" ]]; then
+    d="$HOME/.local/bin"
+  fi
+  if [[ -n "$d" ]]; then
+    /bin/mkdir -p "$d" 2>/dev/null || true
+    case ":${PATH}:" in
+      *":${d}:"*) ;;
+      *) export PATH="${d}:${PATH}" ;;
+    esac
+  fi
+  if [[ -n "${HOME:-}" && -d "$HOME/.cargo/bin" ]]; then
+    case ":${PATH}:" in
+      *":${HOME}/.cargo/bin:"*) ;;
+      *) export PATH="${HOME}/.cargo/bin:${PATH}" ;;
+    esac
+  fi
+}
 
 # When HTS_TUI_ACTIVE=1, status logs are silenced so they don't litter the
 # alt-screen above gum boxes after a clear/redraw.
@@ -16,9 +46,7 @@ hts_log()  {
 hts_err()  { print -u2 -- "[hts] error: $*"; }
 hts_die()  { hts_err "$*"; return 1; }
 
-hts_have() { command -v "$1" >/dev/null 2>&1; }
-
-# Absolute path to hctl when PATH is sparse (uv installs into ~/.local/bin).
+# Resolve peer tools with absolute fallbacks (do not trust a sparse PATH alone).
 hts_hctl_bin() {
   local bin
   bin="$(command -v hctl 2>/dev/null || true)"
@@ -27,20 +55,65 @@ hts_hctl_bin() {
     return 0
   fi
   for bin in \
-    "${HTS_BIN_DIR:-$HOME/.local/bin}/hctl" \
+    "${HTS_BIN_DIR:-}/hctl" \
     "$HOME/.local/bin/hctl" \
     /opt/homebrew/bin/hctl \
     /usr/local/bin/hctl
   do
-    if [[ -x "$bin" ]]; then
-      print -- "$bin"
-      return 0
-    fi
+    [[ -n "$bin" && -x "$bin" ]] || continue
+    print -- "$bin"
+    return 0
   done
   return 1
 }
 
-# Resolve common tools by PATH or absolute fallbacks (uv/launcher PATHs are often sparse).
+hts_gum_bin() {
+  local bin
+  bin="$(command -v gum 2>/dev/null || true)"
+  if [[ -n "$bin" && -x "$bin" ]]; then
+    print -- "$bin"
+    return 0
+  fi
+  for bin in \
+    "${HTS_BIN_DIR:-}/gum" \
+    "$HOME/.local/bin/gum" \
+    /opt/homebrew/bin/gum \
+    /usr/local/bin/gum
+  do
+    [[ -n "$bin" && -x "$bin" ]] || continue
+    print -- "$bin"
+    return 0
+  done
+  return 1
+}
+
+hts_have() {
+  case "$1" in
+    hctl) hts_hctl_bin >/dev/null 2>&1 ;;
+    gum)  hts_gum_bin >/dev/null 2>&1 ;;
+    *)    command -v "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
+hts_hctl() {
+  local bin
+  bin="$(hts_hctl_bin)" || {
+    hts_err "hctl not found — run: hts init   (expected in ~/.local/bin)"
+    return 127
+  }
+  "$bin" "$@"
+}
+
+hts_gum() {
+  local bin
+  bin="$(hts_gum_bin)" || {
+    hts_err "gum not found — run: hts init"
+    return 127
+  }
+  "$bin" "$@"
+}
+
+# Resolve common tools by PATH or absolute fallbacks.
 hts_cmd() {
   local name="$1"
   shift
@@ -52,6 +125,17 @@ hts_cmd() {
       tar)    bin=/usr/bin/tar;  [[ -x $bin ]] || bin=/bin/tar ;;
       open)   bin=/usr/bin/open ;;
       mktemp) bin=/usr/bin/mktemp; [[ -x $bin ]] || bin=/bin/mktemp ;;
+      rm)     bin=/bin/rm; [[ -x $bin ]] || bin=/usr/bin/rm ;;
+      cat)    bin=/bin/cat; [[ -x $bin ]] || bin=/usr/bin/cat ;;
+      mkdir)  bin=/bin/mkdir; [[ -x $bin ]] || bin=/usr/bin/mkdir ;;
+      chmod)  bin=/bin/chmod; [[ -x $bin ]] || bin=/usr/bin/chmod ;;
+      cp)     bin=/bin/cp; [[ -x $bin ]] || bin=/usr/bin/cp ;;
+      head)   bin=/usr/bin/head; [[ -x $bin ]] || bin=/bin/head ;;
+      grep)   bin=/usr/bin/grep; [[ -x $bin ]] || bin=/bin/grep ;;
+      awk)    bin=/usr/bin/awk; [[ -x $bin ]] || bin=/bin/awk ;;
+      uname)  bin=/usr/bin/uname; [[ -x $bin ]] || bin=/bin/uname ;;
+      find)   bin=/usr/bin/find; [[ -x $bin ]] || bin=/bin/find ;;
+      sh)     bin=/bin/sh ;;
       *)      bin="" ;;
     esac
   fi
@@ -61,6 +145,8 @@ hts_cmd() {
   fi
   "$bin" "$@"
 }
+
+hts_rm() { hts_cmd rm "$@"; }
 
 # Create a temp file (or dir with -d); never rely on a sparse PATH for mktemp.
 hts_mktemp() {
@@ -94,14 +180,21 @@ hts_mktemp() {
 hts_curl() { hts_cmd curl "$@"; }
 
 hts_python() {
-  if [[ -x "$HTS_PYTHON" ]] || command -v "$HTS_PYTHON" >/dev/null 2>&1; then
-    "$HTS_PYTHON" "$@"
-  elif [[ -x /usr/bin/python3 ]]; then
-    /usr/bin/python3 "$@"
-  else
+  local py="${HTS_PYTHON:-}"
+  if [[ -z "$py" || ! -x "$py" ]]; then
+    py="$(command -v python3 2>/dev/null || true)"
+  fi
+  if [[ -z "$py" || ! -x "$py" ]]; then
+    py="$(command -v python 2>/dev/null || true)"
+  fi
+  if [[ -z "$py" || ! -x "$py" ]]; then
+    [[ -x /usr/bin/python3 ]] && py=/usr/bin/python3
+  fi
+  if [[ -z "$py" || ! -x "$py" ]]; then
     hts_die "python3 not found"
     return 1
   fi
+  "$py" "$@"
 }
 
 # --- terminal size / adaptive display ---
@@ -112,7 +205,7 @@ hts_term_cols() {
     c="$(tput cols 2>/dev/null || true)"
   fi
   if [[ -z "$c" || "$c" -lt 1 ]] && [[ -r /dev/tty ]]; then
-    c="$(stty size </dev/tty 2>/dev/null | awk '{print $2}')"
+    c="$(stty size </dev/tty 2>/dev/null | hts_cmd awk '{print $2}')"
   fi
   if [[ -z "$c" || "$c" -lt 20 ]]; then
     c=80
@@ -126,7 +219,7 @@ hts_term_rows() {
     r="$(tput lines 2>/dev/null || true)"
   fi
   if [[ -z "$r" || "$r" -lt 1 ]] && [[ -r /dev/tty ]]; then
-    r="$(stty size </dev/tty 2>/dev/null | awk '{print $1}')"
+    r="$(stty size </dev/tty 2>/dev/null | hts_cmd awk '{print $1}')"
   fi
   if [[ -z "$r" || "$r" -lt 8 ]]; then
     r=24
@@ -150,10 +243,10 @@ hts_gum_box() {
   local w
   w="$(hts_gum_width)"
   if (( $# )); then
-    gum style --border rounded --padding "0 1" --width "$w" --border-foreground "$fg" "$@"
+    hts_gum style --border rounded --padding "0 1" --width "$w" --border-foreground "$fg" "$@"
   else
     # stdin path: no --width so aligned tables are not reflowed
-    gum style --border rounded --padding "0 1" --border-foreground "$fg"
+    hts_gum style --border rounded --padding "0 1" --border-foreground "$fg"
   fi
 }
 
@@ -512,8 +605,8 @@ hts_list_modules() {
 hts_open_url() {
   local url="$1"
   [[ -n "$url" ]] || return 0
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    open "$url" >/dev/null 2>&1 || true
+  if [[ "$(hts_cmd uname -s 2>/dev/null || print Unknown)" == "Darwin" ]]; then
+    hts_cmd open "$url" >/dev/null 2>&1 || true
   elif hts_have xdg-open; then
     xdg-open "$url" >/dev/null 2>&1 || true
   fi
