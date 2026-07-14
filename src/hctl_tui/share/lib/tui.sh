@@ -23,7 +23,7 @@ hts_tui_clear() {
 hts_tui_pause() {
   local msg="${1:-Press Enter}"
   print -- "" >/dev/tty 2>/dev/null || print -- ""
-  hts_gum input --placeholder "$msg" --value "" >/dev/null || true
+  hts_gum input --placeholder "$msg" --value "" </dev/null >/dev/null || true
 }
 
 hts_gum_choose_height() {
@@ -45,11 +45,11 @@ hts_gum_pick() {
 }
 
 hts_gum_input() {
-  if [[ -r /dev/tty ]]; then
-    hts_gum input "$@" </dev/tty
-  else
-    hts_gum input "$@"
-  fi
+  # IMPORTANT: gum treats stdin as the initial --value. Never attach /dev/tty
+  # (or any piped content) to stdin here — that shifts later answers into
+  # earlier fields when prompts run inside $(...).
+  # UI still uses the real terminal; only the result goes to stdout.
+  hts_gum input --value="" "$@" </dev/null
 }
 
 # Active profile without an extra chooser. Only prompts when needed.
@@ -246,7 +246,8 @@ hts_tui_matrix_add() {
   fi
   hts_profile_use "$profile" >/dev/null
 
-  local module alias org project identifier trigger mset branch
+  # Use distinct local names (avoid short names that might collide with env).
+  local module add_alias add_org add_project add_pipeline add_trigger add_set add_branch
   module="$(hts_default_module)"
 
   hts_tui_clear
@@ -258,27 +259,41 @@ hts_tui_matrix_add() {
   } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
 
-  alias="$(hts_tui_ask "1/7 Alias" "short name")" || return 0
-  org="$(hts_tui_ask "2/7 Org" "orgIdentifier")" || return 0
-  project="$(hts_tui_ask "3/7 Project" "projectIdentifier")" || return 0
-  identifier="$(hts_tui_ask "4/7 Pipeline" "pipelineIdentifier")" || return 0
-  trigger="$(hts_tui_ask "5/7 Trigger" "triggerIdentifier")" || return 0
-  branch="$(hts_tui_ask "6/7 Branch (optional)" "e.g. main — leave empty if inline")" || return 0
-  mset="$(hts_tui_ask "7/7 Set" "matrix set (e.g. shared)")" || return 0
+  add_alias="$(hts_tui_ask "1/7 Alias" "short name")" || return 0
+  add_org="$(hts_tui_ask "2/7 Org" "orgIdentifier")" || return 0
+  add_project="$(hts_tui_ask "3/7 Project" "projectIdentifier")" || return 0
+  add_pipeline="$(hts_tui_ask "4/7 Pipeline" "pipelineIdentifier")" || return 0
+  add_trigger="$(hts_tui_ask "5/7 Trigger" "triggerIdentifier")" || return 0
+  add_branch="$(hts_tui_ask "6/7 Branch (optional)" "e.g. main" 0)" || return 0
+  add_set="$(hts_tui_ask "7/7 Set" "matrix set (e.g. shared)")" || return 0
 
-  [[ -n "$alias" && -n "$org" && -n "$project" && -n "$identifier" && -n "$trigger" && -n "$mset" ]] || {
+  [[ -n "$add_alias" && -n "$add_org" && -n "$add_project" && -n "$add_pipeline" && -n "$add_trigger" && -n "$add_set" ]] || {
     hts_gum_box_error "Alias, org, project, pipeline, trigger, and set are required."
     hts_tui_pause
     return 0
   }
 
-  hts_matrix_add "$profile" "$module" "$alias" "$trigger" "java" "$mset" \
-    "$org" "$project" "$identifier" "github" "$branch" >/dev/null
+  hts_tui_clear
+  {
+    print -- "Confirm pipeline entry"
+    print -- "  alias:    $add_alias"
+    print -- "  org:      $add_org"
+    print -- "  project:  $add_project"
+    print -- "  pipeline: $add_pipeline"
+    print -- "  trigger:  $add_trigger"
+    print -- "  branch:   ${add_branch:-(none)}"
+    print -- "  set:      $add_set"
+  } | hts_tui_show
+  print -- "" >/dev/tty 2>/dev/null || print -- ""
+  hts_gum confirm "Save this entry?" || return 0
+
+  hts_matrix_add "$profile" "$module" "$add_alias" "$add_trigger" "java" "$add_set" \
+    "$add_org" "$add_project" "$add_pipeline" "github" "$add_branch" >/dev/null
   hts_tui_clear
   hts_gum_box \
-    "Saved: $alias" \
-    "$org / $project / $identifier" \
-    "trigger: $trigger  set: $mset  branch: ${branch:-(none)}"
+    "Saved: $add_alias" \
+    "$add_org / $add_project / $add_pipeline" \
+    "trigger: $add_trigger  set: $add_set  branch: ${add_branch:-(none)}"
   hts_tui_pause "Enter — done"
 }
 
