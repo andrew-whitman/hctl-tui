@@ -54,11 +54,12 @@ PY
 hts_matrix_add() {
   # optional 10th arg: type (github|custom), default github
   # optional 11th arg: branch (for git-backed pipelines)
+  # optional 12th/13th: repo, connector overrides
   # Values are passed to Python via env vars (not argv) to avoid positional drift.
   local profile="$1" module="$2"
   local alias="$3" trigger="$4" tech="$5" set_="$6"
   local org="$7" project="$8" identifier="$9"
-  local etype="${10:-github}" branch="${11:-}"
+  local etype="${10:-github}" branch="${11:-}" repo="${12:-}" connector="${13:-}"
   local path
   path="$(hts_matrix_ensure "$profile" "$module")"
   HTS_MX_PATH="$path" \
@@ -71,6 +72,8 @@ hts_matrix_add() {
   HTS_MX_IDENTIFIER="$identifier" \
   HTS_MX_TYPE="$etype" \
   HTS_MX_BRANCH="$branch" \
+  HTS_MX_REPO="$repo" \
+  HTS_MX_CONNECTOR="$connector" \
   hts_python <<'PY'
 import os, sys
 try:
@@ -89,6 +92,8 @@ project = os.environ.get("HTS_MX_PROJECT") or ""
 identifier = os.environ.get("HTS_MX_IDENTIFIER") or ""
 etype = (os.environ.get("HTS_MX_TYPE") or "github").strip().lower()
 branch = os.environ.get("HTS_MX_BRANCH") or ""
+repo = os.environ.get("HTS_MX_REPO") or ""
+connector = os.environ.get("HTS_MX_CONNECTOR") or ""
 
 if etype in ("webhook", "custom_webhook"):
     etype = "custom"
@@ -111,10 +116,14 @@ entry = {
     },
 }
 if trigger:
-    # github: optional input set id; custom: required trigger identifier
+    # github: webhook trigger id (get-trigger → inputYaml); custom: webhook id
     entry["trigger"] = trigger
 if branch:
     entry["branch"] = branch
+if repo:
+    entry["repo"] = repo
+if connector:
+    entry["connector"] = connector
 entries.append(entry)
 data["module"] = data.get("module") or "ci"
 data["entries"] = entries

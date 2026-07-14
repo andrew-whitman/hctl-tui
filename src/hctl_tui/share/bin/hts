@@ -71,17 +71,19 @@ Matrix options (list/add/remove):
   --profile NAME
   --alias NAME              add/remove
   --type github|custom      add (default: github)
-  --trigger ID              custom: required trigger id;
-                            github: optional input set id
-  --branch NAME             github: optional git branch
+  --trigger ID              github: webhook trigger id (fetches inputYaml);
+                            custom: required webhook trigger id
+  --branch NAME             github: branch (resolves <+trigger.branch>)
+  --repo NAME               github: override repo (--repo-identifier)
+  --connector ID            github: override connectorRef query
   --tech NAME               add (default: java)
   --set NAME                add (default: shared)
   --pipeline-org ORG        add (required)
   --pipeline-project NAME   add (required)
   --pipeline-id ID          add (required)
 
-type=github executes the pipeline (for GitHub-triggered pipelines).
-type=custom POSTs a Harness custom webhook trigger.
+type=github: get-trigger → resolve inputYaml → pipeline execute.
+type=custom: POST Harness custom webhook trigger.
 EOF
 }
 
@@ -231,7 +233,7 @@ hts_cmd_matrix() {
   fi
 
   local profile="" module="" alias="" trigger="" tech="" set_=""
-  local org="" project="" identifier="" etype="github" branch=""
+  local org="" project="" identifier="" etype="github" branch="" repo="" connector=""
 
   # parse remaining flags (shared)
   while (( $# )); do
@@ -242,6 +244,8 @@ hts_cmd_matrix() {
       --type)    etype="$2"; shift 2 ;;
       --trigger) trigger="$2"; shift 2 ;;
       --branch)  branch="$2"; shift 2 ;;
+      --repo)    repo="$2"; shift 2 ;;
+      --connector) connector="$2"; shift 2 ;;
       --tech)    tech="$2"; shift 2 ;;
       --set)     set_="$2"; shift 2 ;;
       --pipeline-org) org="$2"; shift 2 ;;
@@ -275,13 +279,13 @@ hts_cmd_matrix() {
         custom|webhook|custom_webhook) etype="custom" ;;
         github|execute|pipeline|*) etype="github" ;;
       esac
-      if [[ "$etype" == "custom" && -z "$trigger" ]]; then
-        hts_die "matrix add --type custom requires --trigger"
+      if [[ -z "$trigger" ]]; then
+        hts_die "matrix add requires --trigger (github webhook trigger id, or custom webhook id)"
         return 1
       fi
       tech="${tech:-java}"
       set_="${set_:-shared}"
-      hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" "$branch"
+      hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" "$branch" "$repo" "$connector"
       ;;
     remove|rm)
       [[ -n "$alias" ]] || { hts_die "matrix remove requires --alias"; return 1; }

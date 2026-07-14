@@ -195,11 +195,256 @@ hts_fire_custom_trigger() {
   return 0
 }
 
+# Resolve trigger inputYaml for pipeline execute.
+# Args: trigger_json_file branch repo connector body_out_file
+# stdout: JSON {branch,repo,connector,has_body,warnings[]}
+# Writes resolved YAML body to body_out_file when present.
+hts_resolve_trigger_input_yaml() {
+  local trig_file="$1" branch="${2:-}" repo="${3:-}" connector="${4:-}" body_file="${5:-}"
+  HTS_TRIG_FILE="$trig_file" HTS_BRANCH="$branch" HTS_REPO="$repo" \
+  HTS_CONNECTOR="$connector" HTS_BODY_FILE="$body_file" \
+    hts_python <<'PY'
+import json, os, re, sys
+
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("PyYAML required to resolve trigger inputYaml\n")
+    sys.exit(1)
+
+branch = (os.environ.get("HTS_BRANCH") or "").strip()
+repo_ov = (os.environ.get("HTS_REPO") or "").strip()
+conn_ov = (os.environ.get("HTS_CONNECTOR") or "").strip()
+body_file = (os.environ.get("HTS_BODY_FILE") or "").strip()
+trig_file = (os.environ.get("HTS_TRIG_FILE") or "").strip()
+warnings = []
+
+try:
+    with open(trig_file) as f:
+        raw = f.read()
+except Exception as e:
+    sys.stderr.write(f"cannot read get-trigger JSON: {e}\n")
+    sys.exit(1)
+try:
+    resp = json.loads(raw)
+except Exception as e:
+    sys.stderr.write(f"invalid get-trigger JSON: {e}\n")
+    sys.exit(1)
+
+data = resp.get("data") if isinstance(resp, dict) else None
+if not isinstance(data, dict):
+    data = resp if isinstance(resp, dict) else {}
+
+trigger_obj = None
+yaml_str = data.get("yaml") if isinstance(data.get("yaml"), str) else None
+if not yaml_str and isinstance(data.get("trigger"), dict):
+    # some payloads nest under data.trigger
+    t = data["trigger"]
+    yaml_str = t.get("yaml") if isinstance(t.get("yaml"), str) else None
+    if yaml_str is None:
+        trigger_obj = t
+
+if yaml_str:
+    try:
+        loaded = yaml.safe_load(yaml_str)
+    except Exception as e:
+        sys.stderr.write(f"failed to parse trigger yaml: {e}\n")
+        sys.exit(1)
+    if isinstance(loaded, dict) and isinstance(loaded.get("trigger"), dict):
+        trigger_obj = loaded["trigger"]
+    elif isinstance(loaded, dict):
+        trigger_obj = loaded
+elif trigger_obj is None and isinstance(data, dict):
+    # Already-unwrapped trigger fields on data
+    if data.get("inputYaml") is not None or data.get("source") is not None:
+        trigger_obj = data
+
+if not isinstance(trigger_obj, dict):
+    sys.stderr.write("get-trigger response missing trigger yaml/object\n")
+    sys.exit(1)
+
+def dig_webhook_leaf(src):
+    """Walk source.spec... to the Github/Gitlab leaf with connectorRef/repoName."""
+    if not isinstance(src, dict):
+        return {}
+    node = src
+    # source -> spec (Webhook) -> spec (Github) -> spec (Push/PR) -> spec (leaf)
+    for _ in range(5):
+        if not isinstance(node, dict):
+            return {}
+        if node.get("connectorRef") or node.get("repoName") or node.get("repo"):
+            return node
+        nxt = node.get("spec")
+        if isinstance(nxt, dict):
+            node = nxt
+            continue
+        break
+    return node if isinstance(node, dict) else {}
+
+leaf = dig_webhook_leaf(trigger_obj.get("source") or {})
+repo = repo_ov or str(leaf.get("repoName") or leaf.get("repo") or "").strip()
+connector = conn_ov or str(leaf.get("connectorRef") or "").strip()
+
+# pipelineBranchName on trigger (Git Experience) often is <+trigger.branch>
+pbn = trigger_obj.get("pipelineBranchName") or trigger_obj.get("pipeline_branch_name") or ""
+if isinstance(pbn, str) and pbn.strip() and "<+" not in pbn and not branch:
+    branch = pbn.strip()
+
+input_yaml = trigger_obj.get("inputYaml")
+if input_yaml is None:
+    input_yaml = trigger_obj.get("input_yaml")
+if input_yaml is None:
+    input_yaml = ""
+if not isinstance(input_yaml, str):
+    # sometimes structured
+    try:
+        input_yaml = yaml.safe_dump(input_yaml, default_flow_style=False, sort_keys=False)
+    except Exception:
+        input_yaml = str(input_yaml)
+
+EXPR_RE = re.compile(r"<\+\s*trigger\.([A-Za-z0-9_.'\[\]-]+)\s*>")
+
+def expr_value(path):
+    p = path.strip()
+    # Common webhook aliases → matrix branch
+    if p in (
+        "branch", "sourceBranch", "targetBranch",
+        "payload.pull_request.head.ref", "payload.pull_request.base.ref",
+        "payload.ref",
+    ):
+        return branch or None
+    if p in ("repoName", "repo", "payload.repository.name"):
+        return repo or None
+    if p in ("connectorRef", "connector"):
+        return connector or None
+    # PR number has no meaning after PR→branch conversion
+    if p in ("prNumber", "pull_request.number", "payload.pull_request.number"):
+        return ""
+    return None
+
+def replace_exprs(text: str) -> str:
+    def repl(m):
+        path = m.group(1)
+        val = expr_value(path)
+        if val is None:
+            warnings.append(f"unresolved expression: <+trigger.{path}>")
+            return m.group(0)
+        return val
+    return EXPR_RE.sub(repl, text)
+
+def convert_pr_build(node):
+    """Convert codebase build type PR/PullRequest → branch."""
+    if isinstance(node, list):
+        for item in node:
+            convert_pr_build(item)
+        return
+    if not isinstance(node, dict):
+        return
+    build = node.get("build")
+    if isinstance(build, dict):
+        btype = str(build.get("type") or "").strip().lower()
+        if btype in ("pr", "pullrequest", "pull_request"):
+            if not branch:
+                warnings.append("PR build type found but no branch set — set branch: on the matrix entry")
+            build.clear()
+            build["type"] = "branch"
+            build["spec"] = {"branch": branch or "<+trigger.branch>"}
+    for v in node.values():
+        convert_pr_build(v)
+
+resolved_text = replace_exprs(input_yaml)
+has_body = bool(resolved_text.strip())
+if has_body:
+    try:
+        parsed = yaml.safe_load(resolved_text)
+    except Exception as e:
+        sys.stderr.write(f"failed to parse inputYaml after expression replace: {e}\n")
+        sys.exit(1)
+    if parsed is not None:
+        convert_pr_build(parsed)
+        # Second pass: expressions inside converted tree (e.g. leftover)
+        dumped = yaml.safe_dump(parsed, default_flow_style=False, sort_keys=False)
+        resolved_text = replace_exprs(dumped)
+        # Prefer concrete branch from yaml if still unset
+        if not branch and isinstance(parsed, dict):
+            try:
+                b = (
+                    parsed.get("pipeline", {})
+                    .get("properties", {})
+                    .get("ci", {})
+                    .get("codebase", {})
+                    .get("build", {})
+                    .get("spec", {})
+                    .get("branch")
+                )
+                if isinstance(b, str) and b.strip() and "<+" not in b:
+                    branch = b.strip()
+            except Exception:
+                pass
+
+# Final check for leftover <+trigger.*>
+leftover = EXPR_RE.findall(resolved_text or "")
+for path in leftover:
+    w = f"unresolved expression: <+trigger.{path}>"
+    if w not in warnings:
+        warnings.append(w)
+
+if body_file and has_body:
+    with open(body_file, "w") as f:
+        f.write(resolved_text if resolved_text.endswith("\n") else resolved_text + "\n")
+
+out = {
+    "branch": branch,
+    "repo": repo,
+    "connector": connector,
+    "has_body": has_body,
+    "warnings": warnings,
+}
+print(json.dumps(out))
+PY
+}
+
+hts_fetch_trigger_json() {
+  # Args: profile account org project pipeline_id trigger_id
+  # Prints get-trigger JSON on stdout.
+  local profile="$1" account="$2" org="$3" project="$4" pipeline_id="$5" trigger_id="$6"
+  local hctl_bin errfile resp ec=0
+  hctl_bin="$(hts_hctl_bin)" || return 1
+  errfile="$(hts_mktemp hts-get-trigger)" || return 1
+  resp="$(
+    "$hctl_bin" --profile "$profile" triggers get-trigger \
+      --account-identifier "$account" \
+      --org-identifier "$org" \
+      --project-identifier "$project" \
+      --target-identifier "$pipeline_id" \
+      --trigger-identifier "$trigger_id" \
+      --output json 2>"$errfile"
+  )" || ec=$?
+  if (( ec != 0 )); then
+    local err
+    err="$(/bin/cat "$errfile" 2>/dev/null || true)"
+    hts_rm -f "$errfile"
+    hts_err "hctl triggers get-trigger failed for trigger=$trigger_id pipeline=$pipeline_id"
+    [[ -n "$err" ]] && hts_err "  $err"
+    [[ -n "$resp" ]] && hts_err "  $resp"
+    return 1
+  fi
+  hts_rm -f "$errfile"
+  if [[ -z "$resp" ]]; then
+    hts_err "empty response from hctl triggers get-trigger"
+    return 1
+  fi
+  print -- "$resp"
+}
+
 hts_fire_pipeline_execute() {
-  # Args: profile org project pipeline_id module dry_run [input_set] [branch]
-  # Uses: hctl pipeline-execute post-pipeline-execute-with-input-set-yaml
+  # Args: profile org project pipeline_id module dry_run
+  #        [trigger_id] [branch] [repo] [connector] [input_set]
+  # Fetches GitHub/webhook trigger config, resolves inputYaml / <+trigger.*>,
+  # converts PR build → branch, then executes via
+  # hctl pipeline-execute post-pipeline-execute-with-input-set-yaml --body @file
   local profile="$1" org="$2" project="$3" pipeline_id="$4" module="$5" dry_run="${6:-0}"
-  local input_set="${7:-}" branch="${8:-}"
+  local trigger_id="${7:-}" branch="${8:-}" repo="${9:-}" connector="${10:-}" input_set="${11:-}"
   local account
   account="$(hts_hctl_profile_field "$profile" account)"
 
@@ -207,9 +452,12 @@ hts_fire_pipeline_execute() {
   project="$(hts_trim "$project")"
   pipeline_id="$(hts_trim "$pipeline_id")"
   account="$(hts_trim "$account")"
-  input_set="$(hts_trim "$input_set")"
+  trigger_id="$(hts_trim "$trigger_id")"
   branch="$(hts_trim "$branch")"
-  : "$module"  # reserved (matrix module name; not always sent as moduleType)
+  repo="$(hts_trim "$repo")"
+  connector="$(hts_trim "$connector")"
+  input_set="$(hts_trim "$input_set")"
+  : "$module"
 
   local hctl_bin
   hctl_bin="$(hts_hctl_bin)" || {
@@ -227,9 +475,53 @@ hts_fire_pipeline_execute() {
     fi
   fi
 
-  # moduleType is optional in the API; omit unless explicitly useful — a wrong
-  # CI/CD value can contribute to RESOURCE_NOT_FOUND. Branch is required for
-  # many remote (Git Experience) pipelines.
+  local body_file="" has_body=0 resolved_meta=""
+  local trig_file=""
+
+  if [[ -n "$trigger_id" ]]; then
+    if [[ "$dry_run" == "1" && "$account" == "ACCOUNT" ]]; then
+      print -u2 -- "DRY-RUN would: hctl triggers get-trigger --trigger-identifier $trigger_id --target-identifier $pipeline_id"
+    else
+      trig_file="$(hts_mktemp hts-trigger)" || {
+        hts_err "could not create temp trigger file"
+        return 1
+      }
+      hts_fetch_trigger_json "$profile" "$account" "$org" "$project" "$pipeline_id" "$trigger_id" >"$trig_file" || {
+        hts_rm -f "$trig_file"
+        return 1
+      }
+      body_file="$(hts_mktemp hts-body)" || {
+        hts_err "could not create temp body file"
+        hts_rm -f "$trig_file"
+        return 1
+      }
+      resolved_meta="$(
+        hts_resolve_trigger_input_yaml "$trig_file" "$branch" "$repo" "$connector" "$body_file"
+      )" || {
+        local ec=$?
+        hts_rm -f "$trig_file" "$body_file"
+        return $ec
+      }
+      hts_rm -f "$trig_file"
+      branch="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("branch") or "")')"
+      repo="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("repo") or "")')"
+      connector="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("connector") or "")')"
+      has_body="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(1 if json.load(sys.stdin).get("has_body") else 0)')"
+      print -- "$resolved_meta" | hts_python -c '
+import json,sys
+for w in json.load(sys.stdin).get("warnings") or []:
+    print(w)
+' 2>/dev/null | while IFS= read -r w; do
+        [[ -n "$w" ]] && hts_log "warn: $w"
+      done
+      if [[ "$has_body" != "1" ]]; then
+        hts_rm -f "$body_file"
+        body_file=""
+      fi
+    fi
+  fi
+
+  # moduleType omitted intentionally (wrong CI/CD → NOT_FOUND).
   local -a cmd=(
     "$hctl_bin" --profile "$profile"
     pipeline-execute post-pipeline-execute-with-input-set-yaml
@@ -240,26 +532,43 @@ hts_fire_pipeline_execute() {
     --output json
   )
   [[ -n "$branch" ]] && cmd+=(--branch "$branch")
-  [[ -n "$input_set" ]] && cmd+=(--input-set-identifiers "$input_set")
+  [[ -n "$repo" ]] && cmd+=(--repo-identifier "$repo")
+  [[ -n "$connector" ]] && cmd+=(--query "connectorRef=$connector")
+  # Prefer resolved trigger body; only use input-set ids when no body.
+  if [[ -n "$body_file" ]]; then
+    cmd+=(--content-type application/yaml --body "@${body_file}")
+  elif [[ -n "$input_set" ]]; then
+    cmd+=(--input-set-identifiers "$input_set")
+  fi
 
   if [[ "$dry_run" == "1" ]]; then
     print -u2 -- "DRY-RUN hctl pipeline-execute post-pipeline-execute-with-input-set-yaml"
     print -u2 -- "  profile=$profile account=$account"
     print -u2 -- "  org=$org project=$project pipeline=$pipeline_id"
-    [[ -n "$input_set" ]] && print -u2 -- "  inputSet=$input_set"
+    [[ -n "$trigger_id" ]] && print -u2 -- "  trigger=$trigger_id (get-trigger → inputYaml)"
+    [[ -n "$input_set" && -z "$body_file" ]] && print -u2 -- "  inputSet=$input_set"
     [[ -n "$branch" ]] && print -u2 -- "  branch=$branch" || print -u2 -- "  branch=(none — set for git-backed pipelines)"
+    [[ -n "$repo" ]] && print -u2 -- "  repo=$repo"
+    [[ -n "$connector" ]] && print -u2 -- "  connector=$connector"
+    if [[ -n "$body_file" && -f "$body_file" ]]; then
+      print -u2 -- "  body @${body_file}:"
+      /bin/sed 's/^/    /' "$body_file" 1>&2 || true
+    fi
     "${cmd[@]}" --dry-run --curl 1>&2 || true
+    hts_rm -f "$body_file"
     return 0
   fi
 
   local resp ec=0 errfile
   errfile="$(hts_mktemp hts-hctl)" || {
     hts_err "could not create temp file"
+    hts_rm -f "$body_file"
     return 1
   }
   resp="$("${cmd[@]}" 2>"$errfile")" || ec=$?
+  hts_rm -f "$body_file"
   if (( ec != 0 )); then
-    local err msg
+    local err msg=""
     err="$(/bin/cat "$errfile" 2>/dev/null || true)"
     hts_rm -f "$errfile"
     if [[ -n "$resp" ]]; then
@@ -272,7 +581,10 @@ hts_fire_pipeline_execute() {
     if [[ "$msg" == *404* || "$msg" == *NOT_FOUND* || "$msg" == *"not found"* ]]; then
       hts_err "  hint: confirm org/project/pipeline ids match the Harness URL"
       if [[ -z "$branch" ]]; then
-        hts_err "  hint: git-backed pipelines often need a branch — re-add the entry or set branch: in the matrix YAML"
+        hts_err "  hint: git-backed pipelines often need a branch — set branch: on the matrix entry"
+      fi
+      if [[ -z "$trigger_id" ]]; then
+        hts_err "  hint: set trigger: to a GitHub webhook trigger id so hts can resolve inputYaml"
       fi
     fi
     return 1
@@ -288,17 +600,18 @@ hts_fire_pipeline_execute() {
 }
 
 hts_fire_entry() {
-  # Args: profile module type org project pipeline_id trigger_or_inputset dry_run [branch]
+  # Args: profile module type org project pipeline_id trigger dry_run
+  #       [branch] [repo] [connector] [input_set]
   local profile="$1" module="$2" etype="$3" org="$4" project="$5" pipeline_id="$6"
-  local trigger="$7" dry_run="${8:-0}" branch="${9:-}"
+  local trigger="$7" dry_run="${8:-0}" branch="${9:-}" repo="${10:-}" connector="${11:-}" input_set="${12:-}"
   etype="$(hts_entry_type "$etype")"
   case "$etype" in
     custom)
       hts_fire_custom_trigger "$profile" "$org" "$project" "$pipeline_id" "$trigger" "$dry_run"
       ;;
     *)
-      # github / execute via hctl; $trigger holds optional input_set id only
-      hts_fire_pipeline_execute "$profile" "$org" "$project" "$pipeline_id" "$module" "$dry_run" "$trigger" "$branch"
+      hts_fire_pipeline_execute "$profile" "$org" "$project" "$pipeline_id" "$module" "$dry_run" \
+        "$trigger" "$branch" "$repo" "$connector" "$input_set"
       ;;
   esac
 }
@@ -357,14 +670,15 @@ hts_run_matrix() {
 
   local ok=0 fail=0
   local results=()
-  local alias trigger org project pid etype branch resp ui_url trig_status trig_msg fire_ec
+  local alias trigger org project pid etype branch repo connector input_set
+  local resp ui_url trig_status trig_msg fire_ec
 
-  while IFS=$'\t' read -r alias etype trigger org project pid branch; do
+  while IFS=$'\t' read -r alias etype trigger org project pid branch repo connector input_set; do
     [[ -n "$alias" ]] || continue
     etype="$(hts_entry_type "$etype")"
-    hts_log "→ $alias  type=$etype  org=$org project=$project pipeline=$pid branch=${branch:-(-)} trigger/inputSet=${trigger:-(-)}"
+    hts_log "→ $alias  type=$etype  org=$org project=$project pipeline=$pid branch=${branch:-(-)} trigger=${trigger:-(-)} repo=${repo:-(-)}"
     fire_ec=0
-    resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "$dry_run" "$branch")" || fire_ec=$?
+    resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "$dry_run" "$branch" "$repo" "$connector" "$input_set")" || fire_ec=$?
     if [[ "$dry_run" == "1" ]]; then
       trig_status="DRY-RUN"
       ui_url=""
@@ -398,11 +712,10 @@ import json,sys
 for e in json.load(sys.stdin):
     p=e.get("pipeline") or {}
     etype=(e.get("type") or "github").lower()
-    # custom: trigger id is the webhook id. github execute: only pass explicit input_set.
-    if etype in ("custom", "webhook", "custom_webhook"):
-        trig=str(e.get("trigger") or "")
-    else:
-        trig=str(e.get("input_set") or "")
+    # Both github and custom use trigger: as the Harness trigger identifier.
+    # input_set is optional fallback for execute without a trigger body.
+    trig=str(e.get("trigger") or "")
+    input_set=str(e.get("input_set") or "")
     print("\t".join([
         str(e.get("alias") or ""),
         str(e.get("type") or "github"),
@@ -411,6 +724,9 @@ for e in json.load(sys.stdin):
         str(p.get("project") or ""),
         str(p.get("identifier") or ""),
         str(e.get("branch") or ""),
+        str(e.get("repo") or e.get("repo_identifier") or ""),
+        str(e.get("connector") or e.get("connector_ref") or ""),
+        input_set,
     ]))
 ')
 

@@ -6,7 +6,7 @@ TUI orchestration layer for triggering Harness CI/CD pipeline test suites via [h
 
 One command (`hts`) to fire a configured test matrix across multiple pipelines, languages, and environments.
 
-Default entry `type: github` **executes** the pipeline via the Harness NG execute API (correct for pipelines that normally start from GitHub webhooks). Optional `type: custom` POSTs a Harness custom webhook trigger.
+Default entry `type: github` **fetches** the GitHub/webhook trigger (`hctl triggers get-trigger`), resolves `inputYaml` / `<+trigger.*>`, converts PR builds to branch, and **executes** the pipeline via the Harness NG execute API with `--body @file`. Optional `type: custom` POSTs a Harness custom webhook trigger.
 
 hctl-tui does **not** mutate templates, commit, or push.
 
@@ -87,14 +87,16 @@ entries: []
 #     type: github          # default: pipeline execute
 #     tech: java
 #     set: shared
-#     # trigger: optional input set id (github) or custom trigger id (custom)
+#     # trigger: optional — github: webhook trigger id; custom: custom trigger id
+#     # branch: optional — resolves <+trigger.*> / PR→branch for github execute
+#     # repo / connector: optional overrides for --repo-identifier / connectorRef
 #     pipeline:
 #       org: YOUR_ORG
 #       project: YOUR_PROJECT
 #       identifier: YOUR_PIPELINE_ID
 ```
 
-`type: github` executes the pipeline. `type: custom` uses `trigger` as `triggerIdentifier`. Org/project/pipeline come from the entry; account and API key come from the selected hctl profile.
+`type: github` fetches the webhook trigger (`hctl triggers get-trigger`), resolves `inputYaml`, and executes the pipeline. `type: custom` uses `trigger` as `triggerIdentifier` for the custom webhook API. Org/project/pipeline come from the entry; account and API key come from the selected hctl profile.
 
 ## TUI flow
 
@@ -134,12 +136,15 @@ hts doctor
 1. Resolve active hctl profile (`--profile`, else `config.yaml` → `active_hctl_profile`, else hctl current).
 2. Load `matrices/<profile>/<module>.yaml`; apply `--tech` / `--set` / `--alias` filters.
 3. For each matching entry:
-   - `type: github` → `hctl pipeline-execute post-pipeline-execute-with-input-set-yaml`
-     (`POST /pipeline/api/pipeline/execute/{identifier}`)
+   - `type: github` (default):
+     1. `hctl triggers get-trigger` (org/project/`--target-identifier` pipeline + `--trigger-identifier`)
+     2. Extract `inputYaml`; replace `<+trigger.*>` using matrix `branch` / `repo` / `connector` (trigger source provides defaults for repo/connector)
+     3. Convert codebase build `type: PR` → `type: branch` with the resolved branch
+     4. `hctl pipeline-execute post-pipeline-execute-with-input-set-yaml` with `--body @file`, `--branch`, optional `--repo-identifier` / `connectorRef`
    - `type: custom` → `POST /gateway/pipeline/api/webhook/custom/v2` with triggerIdentifier
 4. Collect success/fail; print a summary table.
 5. If `open_urls` / not `--no-open`, open returned `uiUrl`s (macOS `open`, Linux `xdg-open`).
-6. `--dry-run`: print resolved targets and `hctl … --dry-run --curl` without POSTing.
+6. `--dry-run`: fetch+resolve (when authenticated) and print `hctl … --dry-run --curl` without POSTing.
 
 ## Design principles
 

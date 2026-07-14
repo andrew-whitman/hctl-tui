@@ -285,8 +285,8 @@ hts_tui_matrix_add() {
   add_org="$(hts_tty_ask "2/7 Org")" || return 0
   add_project="$(hts_tty_ask "3/7 Project")" || return 0
   add_pipeline="$(hts_tty_ask "4/7 Pipeline")" || return 0
-  add_trigger="$(hts_tty_ask "5/7 Trigger")" || return 0
-  add_branch="$(hts_tty_ask "6/7 Branch (optional, e.g. main)" 0)" || return 0
+  add_trigger="$(hts_tty_ask "5/7 Trigger (GitHub webhook id)")" || return 0
+  add_branch="$(hts_tty_ask "6/7 Branch (e.g. main; resolves <+trigger.branch>)" 0)" || return 0
   add_set="$(hts_tty_ask "7/7 Set")" || return 0
 
   hts_tui_clear
