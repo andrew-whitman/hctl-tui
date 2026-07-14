@@ -85,7 +85,7 @@ hts_tui_pick_profile() {
   hts_tui_clear
   if (( ${#names[@]} == 0 )); then
     hts_gum_box_error \
-      "No hctl profiles found" "Creating one via hctl init…"
+      "No hctl profiles found" "Creating one via hctl init..."
     print -- "" >/dev/tty 2>/dev/null || print -- ""
     hts_profile_init
     hts_active_profile
@@ -162,14 +162,14 @@ hts_tui_run_suite() {
   {
     local tw
     tw="$(hts_term_cols)"
-    print -- "$(hts_trunc "Preview — profile=$profile module=$module" "$tw")"
+    print -- "$(hts_trunc "Preview - profile=$profile module=$module" "$tw")"
     [[ -n "$tech" ]] && print -- "$(hts_trunc "tech=$tech" "$tw")"
     [[ -n "$set_" ]] && print -- "$(hts_trunc "set=$set_" "$tw")"
     [[ -n "$aliases" ]] && print -- "$(hts_trunc "alias=$aliases" "$tw")"
     (( dry_run )) && print -- "mode=dry-run"
     print -- ""
     hts_preview_matrix "$profile" "$module" "$tech" "$set_" "$aliases"
-  } | hts_gum_box
+  } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
   gum confirm "Run this?" || return 0
 
@@ -195,7 +195,7 @@ hts_tui_profiles() {
   case "$action" in
     "List profiles")
       hts_tui_clear
-      hts_profile_list | hts_gum_box
+      hts_profile_list 2>/dev/null | hts_tui_show
       hts_tui_pause
       ;;
     "Switch active profile")
@@ -248,7 +248,7 @@ hts_tui_matrix_progress() {
     if (( ${#filled[@]} )); then
       print -- "Entered:"
       for line in "${filled[@]}"; do
-        print -- "  ✓ $line"
+        print -- "  * $line"
       done
     else
       print -- "Entered: (none yet)"
@@ -258,9 +258,9 @@ hts_tui_matrix_progress() {
       print -- "Still needed: $(hts_trunc "${(j:, :)pending}" "$vw")"
     else
       print -- ""
-      print -- "All fields complete — confirm to save."
+      print -- "All fields complete - confirm to save."
     fi
-  } | hts_gum_box
+  } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
 }
 
@@ -345,7 +345,7 @@ hts_tui_pipelines() {
       fi
       module="$(gum choose --height="$(hts_gum_choose_height)" --header "Module" "${modules[@]}")" || return 0
       hts_tui_clear
-      hts_matrix_list "$profile" "$module" | hts_gum_box
+      hts_matrix_list "$profile" "$module" 2>/dev/null | hts_tui_show
       hts_tui_pause
       ;;
     "Add / update entry")

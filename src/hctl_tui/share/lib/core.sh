@@ -68,23 +68,40 @@ hts_gum_width() {
   print -- "$w"
 }
 
-# Render a bordered gum box that fits the current terminal width.
-# Args are either strings (gum style args) or stdin is used when no args.
-# Writes to /dev/tty so it matches hts_tui_clear (stdout can desync from tty).
+# Short status messages (args preferred). Avoid piping preformatted tables here —
+# gum --width reflows lines and UTF-8 borders can show as mojibake in some terminals.
 hts_gum_box() {
   local fg="${HTS_GUM_FG:-212}"
-  local w out=/dev/tty
+  local w
   w="$(hts_gum_width)"
-  [[ -w /dev/tty ]] || out=/dev/stdout
   if (( $# )); then
-    gum style --border rounded --padding "0 1" --width "$w" --border-foreground "$fg" "$@" >"$out"
+    gum style --border rounded --padding "0 1" --width "$w" --border-foreground "$fg" "$@"
   else
-    gum style --border rounded --padding "0 1" --width "$w" --border-foreground "$fg" >"$out"
+    # stdin path: no --width so aligned tables are not reflowed
+    gum style --border rounded --padding "0 1" --border-foreground "$fg"
   fi
 }
 
 hts_gum_box_warn()  { HTS_GUM_FG=214 hts_gum_box "$@"; }
 hts_gum_box_error() { HTS_GUM_FG=196 hts_gum_box "$@"; }
+
+# Clean multi-line text for the TUI (no lipgloss reflow).
+# Args are lines, or stdin when no args. Prefer /dev/tty when it actually works.
+hts_tui_show() {
+  if { print -n -- "" >/dev/tty; } 2>/dev/null; then
+    if (( $# )); then
+      printf '%s\n' "$@" >/dev/tty
+    else
+      /bin/cat >/dev/tty
+    fi
+  else
+    if (( $# )); then
+      printf '%s\n' "$@"
+    else
+      /bin/cat
+    fi
+  fi
+}
 
 # Truncate a string to max width with an ellipsis when needed.
 hts_trunc() {
@@ -96,10 +113,10 @@ if max_w < 1:
     print("")
 elif len(s) <= max_w:
     print(s)
-elif max_w <= 1:
-    print("…")
+elif max_w <= 3:
+    print(s[:max_w])
 else:
-    print(s[: max_w - 1] + "…")
+    print(s[: max_w - 3] + "...")
 ' "$s" "$max"
 }
 
@@ -131,9 +148,9 @@ def trunc(s, n):
         return ""
     if len(s) <= n:
         return s
-    if n == 1:
-        return "…"
-    return s[: n - 1] + "…"
+    if n <= 3:
+        return s[:n]
+    return s[: n - 3] + "..."
 
 def pipeline(e):
     p = e.get("pipeline") or {}
@@ -234,9 +251,9 @@ def trunc(s, n):
         return ""
     if len(s) <= n:
         return s
-    if n == 1:
-        return "…"
-    return s[: n - 1] + "…"
+    if n <= 3:
+        return s[:n]
+    return s[: n - 3] + "..."
 
 rows = []
 for ln in lines:
