@@ -4,23 +4,28 @@
 # Use the alternate screen buffer so menus redraw in place (like vim/htop)
 # instead of stacking boxes in the scrollback.
 hts_tui_enter() {
+  HTS_TUI_ACTIVE=1
   printf '\e[?1049h' >/dev/tty 2>/dev/null || printf '\e[?1049h'
   hts_tui_clear
 }
 
 hts_tui_leave() {
+  HTS_TUI_ACTIVE=0
   printf '\e[?1049l' >/dev/tty 2>/dev/null || printf '\e[?1049l'
 }
 
 hts_tui_clear() {
-  # cursor home + erase screen + clear scrollback (where supported)
-  printf '\e[H\e[2J\e[3J' >/dev/tty 2>/dev/null || printf '\e[H\e[2J\e[3J'
+  # Reset attrs, home cursor, erase screen + scrollback (where supported).
+  # Always target /dev/tty so leftovers on stdout don't coexist with the UI.
+  {
+    printf '\e[0m\e[H\e[2J\e[3J'
+  } >/dev/tty 2>/dev/null || printf '\e[0m\e[H\e[2J\e[3J'
 }
 
 hts_tui_pause() {
   # Brief acknowledgment before returning to a menu
   local msg="${1:-Press Enter to continue}"
-  print -- ""
+  print -- "" >/dev/tty 2>/dev/null || print -- ""
   gum input --placeholder "$msg" --value "" >/dev/null || true
 }
 
@@ -81,7 +86,7 @@ hts_tui_pick_profile() {
   if (( ${#names[@]} == 0 )); then
     hts_gum_box_error \
       "No hctl profiles found" "Creating one via hctl init…"
-    print -- ""
+    print -- "" >/dev/tty 2>/dev/null || print -- ""
     hts_profile_init
     hts_active_profile
     return 0
@@ -115,7 +120,7 @@ hts_tui_run_suite() {
     hts_tui_clear
     hts_gum_box_warn \
       "No matrices for profile '$profile'."
-    print -- ""
+    print -- "" >/dev/tty 2>/dev/null || print -- ""
     if gum confirm "Create a matrix entry now?"; then
       hts_tui_matrix_add "$profile"
       modules=()
@@ -165,7 +170,7 @@ hts_tui_run_suite() {
     print -- ""
     hts_preview_matrix "$profile" "$module" "$tech" "$set_" "$aliases"
   } | hts_gum_box
-  print -- ""
+  print -- "" >/dev/tty 2>/dev/null || print -- ""
   gum confirm "Run this?" || return 0
 
   hts_tui_clear
@@ -256,7 +261,7 @@ hts_tui_matrix_progress() {
       print -- "All fields complete — confirm to save."
     fi
   } | hts_gum_box
-  print -- ""
+  print -- "" >/dev/tty 2>/dev/null || print -- ""
 }
 
 hts_tui_matrix_prompt() {
@@ -302,7 +307,7 @@ hts_tui_matrix_add() {
   hts_tui_matrix_progress "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
   gum confirm "Save this matrix entry?" || return 0
 
-  hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
+  hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" >/dev/null
   hts_tui_clear
   local path_show
   path_show="$(hts_trunc "matrices/$profile/$module.yaml" "$(( $(hts_term_cols) - 8 ))")"

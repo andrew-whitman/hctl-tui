@@ -7,7 +7,12 @@ HTS_MATRICES_DIR="${HTS_CONFIG_DIR}/matrices"
 HTS_HCTL_CONFIG="${HARNESS_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hctl/config.json}"
 HTS_PYTHON="${HTS_PYTHON:-$(command -v python3 2>/dev/null || command -v python 2>/dev/null || print /usr/bin/python3)}"
 
-hts_log()  { print -u2 -- "[hts] $*"; }
+# When HTS_TUI_ACTIVE=1, status logs are silenced so they don't litter the
+# alt-screen above gum boxes after a clear/redraw.
+hts_log()  {
+  [[ "${HTS_TUI_ACTIVE:-0}" == "1" ]] && return 0
+  print -u2 -- "[hts] $*"
+}
 hts_err()  { print -u2 -- "[hts] error: $*"; }
 hts_die()  { hts_err "$*"; return 1; }
 
@@ -65,14 +70,16 @@ hts_gum_width() {
 
 # Render a bordered gum box that fits the current terminal width.
 # Args are either strings (gum style args) or stdin is used when no args.
+# Writes to /dev/tty so it matches hts_tui_clear (stdout can desync from tty).
 hts_gum_box() {
   local fg="${HTS_GUM_FG:-212}"
-  local w
+  local w out=/dev/tty
   w="$(hts_gum_width)"
+  [[ -w /dev/tty ]] || out=/dev/stdout
   if (( $# )); then
-    gum style --border rounded --padding "0 1" --width "$w" --border-foreground "$fg" "$@"
+    gum style --border rounded --padding "0 1" --width "$w" --border-foreground "$fg" "$@" >"$out"
   else
-    gum style --border rounded --padding "0 1" --width "$w" --border-foreground "$fg"
+    gum style --border rounded --padding "0 1" --width "$w" --border-foreground "$fg" >"$out"
   fi
 }
 
