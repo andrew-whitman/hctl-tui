@@ -246,37 +246,39 @@ hts_tui_matrix_add() {
   fi
   hts_profile_use "$profile" >/dev/null
 
-  local module alias org project identifier trigger mset
+  local module alias org project identifier trigger mset branch
   module="$(hts_default_module)"
 
   hts_tui_clear
   {
     print -- "Add pipeline"
     print -- "profile=$profile  module=$module"
-    print -- "Six fields — then Run will execute the pipeline."
+    print -- "Required: alias, org, project, pipeline, trigger, set"
+    print -- "Optional: branch (needed for git-backed / remote pipelines)"
   } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
 
-  alias="$(hts_tui_ask "1/6 Alias" "short name")" || return 0
-  org="$(hts_tui_ask "2/6 Org" "orgIdentifier")" || return 0
-  project="$(hts_tui_ask "3/6 Project" "projectIdentifier")" || return 0
-  identifier="$(hts_tui_ask "4/6 Pipeline" "pipelineIdentifier")" || return 0
-  trigger="$(hts_tui_ask "5/6 Trigger" "triggerIdentifier")" || return 0
-  mset="$(hts_tui_ask "6/6 Set" "matrix set (e.g. shared)")" || return 0
+  alias="$(hts_tui_ask "1/7 Alias" "short name")" || return 0
+  org="$(hts_tui_ask "2/7 Org" "orgIdentifier")" || return 0
+  project="$(hts_tui_ask "3/7 Project" "projectIdentifier")" || return 0
+  identifier="$(hts_tui_ask "4/7 Pipeline" "pipelineIdentifier")" || return 0
+  trigger="$(hts_tui_ask "5/7 Trigger" "triggerIdentifier")" || return 0
+  mset="$(hts_tui_ask "6/7 Set" "matrix set (e.g. shared)")" || return 0
+  branch="$(hts_tui_ask "7/7 Branch (optional)" "e.g. main — leave empty if inline")" || return 0
 
   [[ -n "$alias" && -n "$org" && -n "$project" && -n "$identifier" && -n "$trigger" && -n "$mset" ]] || {
-    hts_gum_box_error "All six fields are required."
+    hts_gum_box_error "Alias, org, project, pipeline, trigger, and set are required."
     hts_tui_pause
     return 0
   }
 
   hts_matrix_add "$profile" "$module" "$alias" "$trigger" "java" "$mset" \
-    "$org" "$project" "$identifier" "github" "" >/dev/null
+    "$org" "$project" "$identifier" "github" "$branch" >/dev/null
   hts_tui_clear
   hts_gum_box \
     "Saved: $alias" \
     "$org / $project / $identifier" \
-    "trigger: $trigger  set: $mset"
+    "trigger: $trigger  set: $mset  branch: ${branch:-(none)}"
   hts_tui_pause "Enter — done"
 }
 

@@ -200,9 +200,8 @@ hts_fire_pipeline_execute() {
   # Uses: hctl pipeline-execute post-pipeline-execute-with-input-set-yaml
   local profile="$1" org="$2" project="$3" pipeline_id="$4" module="$5" dry_run="${6:-0}"
   local input_set="${7:-}" branch="${8:-}"
-  local account module_type
+  local account
   account="$(hts_hctl_profile_field "$profile" account)"
-  module_type="$(hts_module_type "$module")"
 
   org="$(hts_trim "$org")"
   project="$(hts_trim "$project")"
@@ -210,6 +209,7 @@ hts_fire_pipeline_execute() {
   account="$(hts_trim "$account")"
   input_set="$(hts_trim "$input_set")"
   branch="$(hts_trim "$branch")"
+  : "$module"  # reserved (matrix module name; not always sent as moduleType)
 
   local hctl_bin
   hctl_bin="$(hts_hctl_bin)" || {
@@ -227,6 +227,9 @@ hts_fire_pipeline_execute() {
     fi
   fi
 
+  # moduleType is optional in the API; omit unless explicitly useful — a wrong
+  # CI/CD value can contribute to RESOURCE_NOT_FOUND. Branch is required for
+  # many remote (Git Experience) pipelines.
   local -a cmd=(
     "$hctl_bin" --profile "$profile"
     pipeline-execute post-pipeline-execute-with-input-set-yaml
@@ -234,9 +237,6 @@ hts_fire_pipeline_execute() {
     --org-identifier "$org"
     --project-identifier "$project"
     --identifier "$pipeline_id"
-    --module-type "$module_type"
-    --content-type application/yaml
-    --body ''
     --output json
   )
   [[ -n "$branch" ]] && cmd+=(--branch "$branch")
@@ -244,10 +244,10 @@ hts_fire_pipeline_execute() {
 
   if [[ "$dry_run" == "1" ]]; then
     print -u2 -- "DRY-RUN hctl pipeline-execute post-pipeline-execute-with-input-set-yaml"
-    print -u2 -- "  profile=$profile account=$account moduleType=$module_type"
+    print -u2 -- "  profile=$profile account=$account"
     print -u2 -- "  org=$org project=$project pipeline=$pipeline_id"
     [[ -n "$input_set" ]] && print -u2 -- "  inputSet=$input_set"
-    [[ -n "$branch" ]] && print -u2 -- "  branch=$branch"
+    [[ -n "$branch" ]] && print -u2 -- "  branch=$branch" || print -u2 -- "  branch=(none — set for git-backed pipelines)"
     "${cmd[@]}" --dry-run --curl 1>&2 || true
     return 0
   fi
@@ -259,18 +259,22 @@ hts_fire_pipeline_execute() {
   }
   resp="$("${cmd[@]}" 2>"$errfile")" || ec=$?
   if (( ec != 0 )); then
-    local err
+    local err msg
     err="$(/bin/cat "$errfile" 2>/dev/null || true)"
     hts_rm -f "$errfile"
     if [[ -n "$resp" ]]; then
       print -- "$resp"
-      local msg
       msg="$(print -- "$resp" | hts_trigger_message)"
-      [[ -n "$msg" ]] && hts_err "hctl execute failed for $org/$project/$pipeline_id: $msg"
     fi
-    [[ -n "$err" ]] && hts_err "$err"
-    (( ec != 0 )) && [[ -z "$resp" && -z "$err" ]] && \
-      hts_err "hctl execute failed (exit $ec) for $org/$project/$pipeline_id"
+    [[ -z "$msg" && -n "$err" ]] && msg="$err"
+    hts_err "hctl execute failed for account=$account org=$org project=$project pipeline=$pipeline_id${branch:+ branch=$branch}"
+    [[ -n "$msg" ]] && hts_err "  $msg"
+    if [[ "$msg" == *404* || "$msg" == *NOT_FOUND* || "$msg" == *"not found"* ]]; then
+      hts_err "  hint: confirm org/project/pipeline ids match the Harness URL"
+      if [[ -z "$branch" ]]; then
+        hts_err "  hint: git-backed pipelines often need a branch — re-add the entry or set branch: in the matrix YAML"
+      fi
+    fi
     return 1
   fi
   hts_rm -f "$errfile"
