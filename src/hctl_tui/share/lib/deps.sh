@@ -40,8 +40,8 @@ hts_install_uv() {
   if hts_have brew; then
     brew install uv && return 0
   fi
-  if hts_have curl; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+  if hts_have curl || [[ -x /usr/bin/curl ]]; then
+    hts_curl -LsSf https://astral.sh/uv/install.sh | sh
     hts_path_prepend_user_bin
     # official installer may put uv in ~/.local/bin or ~/.cargo/bin
     if [[ -x "$HOME/.local/bin/uv" ]]; then
@@ -142,8 +142,8 @@ hts_gum_asset_triple() {
 }
 
 hts_install_gum_from_github() {
-  hts_have curl || { hts_err "curl required to download gum"; return 1; }
-  hts_have tar || { hts_err "tar required to extract gum"; return 1; }
+  { hts_have curl || [[ -x /usr/bin/curl ]]; } || { hts_err "curl required to download gum"; return 1; }
+  { hts_have tar || [[ -x /usr/bin/tar ]]; } || { hts_err "tar required to extract gum"; return 1; }
 
   local triple dest tmp tag asset url
   triple="$(hts_gum_asset_triple)" || return 1
@@ -152,7 +152,7 @@ hts_install_gum_from_github() {
   tmp="$(mktemp -d)"
 
   tag="$(
-    curl -fsSL https://api.github.com/repos/charmbracelet/gum/releases/latest \
+    hts_curl -fsSL https://api.github.com/repos/charmbracelet/gum/releases/latest \
       | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))' 2>/dev/null
   )"
   if [[ -z "$tag" ]]; then
@@ -166,7 +166,7 @@ hts_install_gum_from_github() {
   asset="gum_${ver}_${triple}.tar.gz"
   url="https://github.com/charmbracelet/gum/releases/download/${tag}/${asset}"
   hts_log "  downloading $url"
-  if ! curl -fsSL "$url" -o "$tmp/gum.tgz"; then
+  if ! hts_curl -fsSL "$url" -o "$tmp/gum.tgz"; then
     /bin/rm -rf "$tmp"
     return 1
   fi

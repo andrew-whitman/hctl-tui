@@ -81,7 +81,7 @@ hts_fire_custom_trigger() {
     )" || ec=$?
   else
     resp="$(
-      curl -sS -X POST \
+      hts_curl -sS -X POST \
         -H 'content-type: application/json' \
         -H "X-Api-Key: ${api_key}" \
         --url "$url" \
@@ -93,7 +93,7 @@ hts_fire_custom_trigger() {
     # Retry with curl if hctl path failed
     if [[ -n "$HTS_WEBHOOK_OP" ]]; then
       resp="$(
-        curl -sS -X POST \
+        hts_curl -sS -X POST \
           -H 'content-type: application/json' \
           -H "X-Api-Key: ${api_key}" \
           --url "$url" \

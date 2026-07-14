@@ -18,6 +18,29 @@ hts_die()  { hts_err "$*"; return 1; }
 
 hts_have() { command -v "$1" >/dev/null 2>&1; }
 
+# Resolve common tools by PATH or absolute fallbacks (uv/launcher PATHs are often sparse).
+hts_cmd() {
+  local name="$1"
+  shift
+  local bin
+  bin="$(command -v "$name" 2>/dev/null || true)"
+  if [[ -z "$bin" || ! -x "$bin" ]]; then
+    case "$name" in
+      curl) bin=/usr/bin/curl; [[ -x $bin ]] || bin=/bin/curl ;;
+      tar)  bin=/usr/bin/tar;  [[ -x $bin ]] || bin=/bin/tar ;;
+      open) bin=/usr/bin/open ;;
+      *)    bin="" ;;
+    esac
+  fi
+  if [[ -z "$bin" || ! -x "$bin" ]]; then
+    hts_err "command not found: $name (is it installed and on PATH?)"
+    return 127
+  fi
+  "$bin" "$@"
+}
+
+hts_curl() { hts_cmd curl "$@"; }
+
 hts_python() {
   if [[ -x "$HTS_PYTHON" ]] || command -v "$HTS_PYTHON" >/dev/null 2>&1; then
     "$HTS_PYTHON" "$@"
@@ -305,7 +328,7 @@ hts_require_deps() {
       ;;
     run)
       hts_have hctl || missing+=(hctl)
-      hts_have curl || missing+=(curl)
+      { hts_have curl || [[ -x /usr/bin/curl ]]; } || missing+=(curl)
       ;;
     dry-run|matrix|any)
       ;;

@@ -31,6 +31,10 @@ def main(argv: list[str] | None = None) -> None:
     env = os.environ.copy()
     env["HTS_ROOT"] = str(share)
     env["HTS_LIB"] = str(share / "lib")
+    # uv tool / GUI launches often ship a sparse PATH; keep system bins discoverable.
+    extras = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
+    path = env.get("PATH") or ""
+    env["PATH"] = f"{path}:{extras}" if path else extras
     # Replace this process with the zsh TUI/CLI (same argv semantics as bin/hts).
     os.execve(zsh, [zsh, str(script), *args], env)
 
