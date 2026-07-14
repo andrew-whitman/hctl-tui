@@ -147,14 +147,19 @@ hts_tui_matrix_add() {
   local profile="${1:-$(hts_active_profile)}"
   local module alias trigger tech set_ org project identifier
 
-  module="$(gum input --placeholder "module" --value "$(hts_default_module)")" || return 1
-  alias="$(gum input --placeholder "alias")" || return 1
-  trigger="$(gum input --placeholder "trigger identifier")" || return 1
-  tech="$(gum input --placeholder "tech" --value "java")" || return 1
-  set_="$(gum input --placeholder "set" --value "shared")" || return 1
-  org="$(gum input --placeholder "pipeline org" --value "default")" || return 1
-  project="$(gum input --placeholder "pipeline project")" || return 1
-  identifier="$(gum input --placeholder "pipeline identifier")" || return 1
+  module="$(gum input --placeholder "module (e.g. ci, cd)")" || return 1
+  alias="$(gum input --placeholder "alias (short name for this matrix entry)")" || return 1
+  trigger="$(gum input --placeholder "trigger (Harness custom trigger identifier)")" || return 1
+  tech="$(gum input --placeholder "tech (e.g. java, go, python)")" || return 1
+  set_="$(gum input --placeholder "set (e.g. shared, exclusive)")" || return 1
+  org="$(gum input --placeholder "pipeline org (Harness orgIdentifier)")" || return 1
+  project="$(gum input --placeholder "pipeline project (Harness projectIdentifier)")" || return 1
+  identifier="$(gum input --placeholder "pipeline identifier (Harness pipelineIdentifier)")" || return 1
+
+  if [[ -z "$module" || -z "$alias" || -z "$trigger" || -z "$tech" || -z "$set_" || -z "$org" || -z "$project" || -z "$identifier" ]]; then
+    gum style --foreground 196 "All fields are required — nothing was saved."
+    return 1
+  fi
 
   hts_matrix_add "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier"
   gum style --foreground 212 "Saved $alias → matrices/$profile/$module.yaml"
