@@ -1,0 +1,41 @@
+---
+description: Auto-bump semantic version when committing work destined for main
+alwaysApply: true
+---
+
+# Semantic version on main
+
+When creating a git commit that will land on `main` (commit on `main`, or on a branch the user will merge/PR into `main`), **bump the package version in the same commit** unless the user says not to, or the change is docs-only / chore with no user-facing or behavioral impact.
+
+## Version sources (keep identical)
+
+1. `pyproject.toml` → `[project] version = "X.Y.Z"`
+2. `src/hctl_tui/__init__.py` → `__version__ = "X.Y.Z"`
+
+Never bump one without the other.
+
+## Bump rules (semver)
+
+Default: **PATCH** (`X.Y.Z` → `X.Y.Z+1`).
+
+| Change | Bump |
+|--------|------|
+| Bugfix, small polish, deps, internal refactor with same behavior | PATCH |
+| New command/flag, new TUI flow, backward-compatible feature | MINOR (`X.Y.Z` → `X.Y+1.0`) |
+| Breaking CLI/TUI contract, removed commands, incompatible config | MAJOR (`X.Y.Z` → `X+1.0.0`) |
+
+If the user names a bump (`patch` / `minor` / `major`), follow that.
+
+## Commit workflow
+
+1. Read current version from `pyproject.toml`.
+2. Choose bump; update **both** version sources.
+3. Stage version files with the rest of the change.
+4. Prefer a commit body or trailer note like `Bump version to X.Y.Z` when the bump is not obvious from the subject.
+
+## Skip bumping when
+
+- User opts out (`no version bump`, `don't bump`, etc.)
+- Commit is only docs/comments/formatting with no runtime change
+- Commit is already a version-only bump the user requested
+- Working on a throwaway/experiment branch the user says will not merge
