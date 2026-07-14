@@ -240,23 +240,25 @@ hts_tui_matrix_progress() {
 
   tw="$(hts_term_cols)"
   vw=$(( tw - 16 ))
-  (( vw < 12 )) && vw=12
+  if (( vw < 12 )); then
+    vw=12
+  fi
 
   filled=()
   pending=()
-  [[ -n "$module" ]]     && filled+=("module:     $(hts_trunc "$module" "$vw")")     || pending+=("module")
-  [[ -n "$etype" ]]      && filled+=("type:       $(hts_trunc "$etype" "$vw")")      || pending+=("type")
-  [[ -n "$alias" ]]      && filled+=("alias:      $(hts_trunc "$alias" "$vw")")      || pending+=("alias")
+  if [[ -n "$module" ]]; then filled+=("module:     $(hts_trunc "$module" "$vw")"); else pending+=("module"); fi
+  if [[ -n "$etype" ]]; then filled+=("type:       $(hts_trunc "$etype" "$vw")"); else pending+=("type"); fi
+  if [[ -n "$alias" ]]; then filled+=("alias:      $(hts_trunc "$alias" "$vw")"); else pending+=("alias"); fi
   if [[ "$etype" == "custom" ]]; then
-    [[ -n "$trigger" ]]  && filled+=("trigger:    $(hts_trunc "$trigger" "$vw")")    || pending+=("trigger")
+    if [[ -n "$trigger" ]]; then filled+=("trigger:    $(hts_trunc "$trigger" "$vw")"); else pending+=("trigger"); fi
   elif [[ -n "$etype" ]]; then
-    [[ -n "$trigger" ]]  && filled+=("input_set:  $(hts_trunc "$trigger" "$vw")")    || filled+=("input_set:  (none)")
+    if [[ -n "$trigger" ]]; then filled+=("input_set:  $(hts_trunc "$trigger" "$vw")"); else filled+=("input_set:  (none)"); fi
   fi
-  [[ -n "$tech" ]]       && filled+=("tech:       $(hts_trunc "$tech" "$vw")")       || pending+=("tech")
-  [[ -n "$set_" ]]       && filled+=("set:        $(hts_trunc "$set_" "$vw")")       || pending+=("set")
-  [[ -n "$org" ]]        && filled+=("org:        $(hts_trunc "$org" "$vw")")        || pending+=("org")
-  [[ -n "$project" ]]    && filled+=("project:    $(hts_trunc "$project" "$vw")")    || pending+=("project")
-  [[ -n "$identifier" ]] && filled+=("pipeline:   $(hts_trunc "$identifier" "$vw")") || pending+=("pipeline")
+  if [[ -n "$tech" ]]; then filled+=("tech:       $(hts_trunc "$tech" "$vw")"); else pending+=("tech"); fi
+  if [[ -n "$set_" ]]; then filled+=("set:        $(hts_trunc "$set_" "$vw")"); else pending+=("set"); fi
+  if [[ -n "$org" ]]; then filled+=("org:        $(hts_trunc "$org" "$vw")"); else pending+=("org"); fi
+  if [[ -n "$project" ]]; then filled+=("project:    $(hts_trunc "$project" "$vw")"); else pending+=("project"); fi
+  if [[ -n "$identifier" ]]; then filled+=("pipeline:   $(hts_trunc "$identifier" "$vw")"); else pending+=("pipeline"); fi
 
   {
     print -- "New matrix entry"
@@ -283,17 +285,18 @@ hts_tui_matrix_progress() {
 
 hts_tui_matrix_prompt() {
   # Clear, show progress, ask one field.
-  # usage: hts_tui_matrix_prompt <var_name> <placeholder> [--optional] profile module alias trigger tech set org project identifier [type]
-  local __var="$1" __ph="$2"
-  shift 2
+  # usage: hts_tui_matrix_prompt [--optional] <var_name> <placeholder> \
+  #          profile module alias trigger tech set org project identifier [type]
   local __optional=0
   if [[ "${1:-}" == "--optional" ]]; then
     __optional=1
     shift
   fi
+  local __var="$1" __ph="$2"
+  shift 2
   hts_tui_clear
   hts_tui_matrix_progress "$@"
-  local __val
+  local __val=""
   __val="$(gum input --placeholder "$__ph")" || return 1
   if [[ -z "$__val" && "$__optional" != "1" ]]; then
     hts_tui_clear
@@ -317,8 +320,8 @@ hts_tui_matrix_add() {
     hts_gum_pick \
       --height="$(hts_gum_choose_height)" \
       --header "How should hts fire this pipeline?" \
-      "github — execute pipeline (GitHub / ad-hoc runs)" \
-      "custom — Harness custom webhook trigger"
+      "github - execute pipeline (GitHub / ad-hoc runs)" \
+      "custom - Harness custom webhook trigger"
   )" || return 1
   case "$etype" in
     custom*) etype="custom" ;;
@@ -331,7 +334,7 @@ hts_tui_matrix_add() {
     hts_tui_matrix_prompt trigger "custom trigger identifier (required)" \
       "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
   else
-    hts_tui_matrix_prompt trigger --optional "optional input set id (blank=none)" \
+    hts_tui_matrix_prompt --optional trigger "optional input set id (blank=none)" \
       "$profile" "$module" "$alias" "$trigger" "$tech" "$set_" "$org" "$project" "$identifier" "$etype" || return 1
   fi
   hts_tui_matrix_prompt tech "tech (e.g. java, go, python)" \
