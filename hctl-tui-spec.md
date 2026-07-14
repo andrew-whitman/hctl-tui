@@ -134,11 +134,12 @@ hts doctor
 1. Resolve active hctl profile (`--profile`, else `config.yaml` → `active_hctl_profile`, else hctl current).
 2. Load `matrices/<profile>/<module>.yaml`; apply `--tech` / `--set` / `--alias` filters.
 3. For each matching entry:
-   - `type: github` → `POST /gateway/pipeline/api/pipeline/execute/{pipelineIdentifier}`
+   - `type: github` → `hctl pipeline-execute post-pipeline-execute-with-input-set-yaml`
+     (`POST /pipeline/api/pipeline/execute/{identifier}`)
    - `type: custom` → `POST /gateway/pipeline/api/webhook/custom/v2` with triggerIdentifier
 4. Collect success/fail; print a summary table.
 5. If `open_urls` / not `--no-open`, open returned `uiUrl`s (macOS `open`, Linux `xdg-open`).
-6. `--dry-run`: print resolved targets and the `hctl … --dry-run` / `--curl` preview without POSTing.
+6. `--dry-run`: print resolved targets and `hctl … --dry-run --curl` without POSTing.
 
 ## Design principles
 

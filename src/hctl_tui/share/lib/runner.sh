@@ -197,16 +197,11 @@ hts_fire_custom_trigger() {
 
 hts_fire_pipeline_execute() {
   # Args: profile org project pipeline_id module dry_run [input_set] [branch]
-  # Executes pipeline via NG API (use this for GitHub-triggered pipelines).
+  # Uses: hctl pipeline-execute post-pipeline-execute-with-input-set-yaml
   local profile="$1" org="$2" project="$3" pipeline_id="$4" module="$5" dry_run="${6:-0}"
   local input_set="${7:-}" branch="${8:-}"
-  local host account api_key module_type
-  host="$(hts_hctl_profile_field "$profile" host)"
+  local account module_type
   account="$(hts_hctl_profile_field "$profile" account)"
-  api_key="$(hts_hctl_profile_field "$profile" api_key)"
-  host="${host:-https://app.harness.io}"
-  host="${host%/}"
-  host="${host%/gateway}"
   module_type="$(hts_module_type "$module")"
 
   org="$(hts_trim "$org")"
@@ -215,6 +210,11 @@ hts_fire_pipeline_execute() {
   account="$(hts_trim "$account")"
   input_set="$(hts_trim "$input_set")"
   branch="$(hts_trim "$branch")"
+
+  if ! hts_have hctl; then
+    hts_err "hctl is required — run: hts init"
+    return 1
+  fi
 
   if [[ -z "$account" ]]; then
     if [[ "$dry_run" == "1" ]]; then
@@ -225,56 +225,60 @@ hts_fire_pipeline_execute() {
       return 1
     fi
   fi
-  if [[ "$dry_run" != "1" && -z "$api_key" && -z "${HARNESS_API_KEY:-}" ]]; then
-    hts_err "no API key for profile '$profile' (set in hctl or HARNESS_API_KEY)"
-    return 1
-  fi
-  api_key="${api_key:-${HARNESS_API_KEY:-}}"
 
-  local url
-  url="${host}/gateway/pipeline/api/pipeline/execute/$(hts_urlencode "$pipeline_id")?accountIdentifier=$(hts_urlencode "$account")&orgIdentifier=$(hts_urlencode "$org")&projectIdentifier=$(hts_urlencode "$project")&moduleType=$(hts_urlencode "$module_type")"
-  [[ -n "$branch" ]] && url+="&branch=$(hts_urlencode "$branch")"
-  [[ -n "$input_set" ]] && url+="&inputSetIdentifiers=$(hts_urlencode "$input_set")"
+  local -a cmd=(
+    hctl --profile "$profile"
+    pipeline-execute post-pipeline-execute-with-input-set-yaml
+    --account-identifier "$account"
+    --org-identifier "$org"
+    --project-identifier "$project"
+    --identifier "$pipeline_id"
+    --module-type "$module_type"
+    --content-type application/yaml
+    --body ''
+    --output json
+  )
+  [[ -n "$branch" ]] && cmd+=(--branch "$branch")
+  [[ -n "$input_set" ]] && cmd+=(--input-set-identifiers "$input_set")
 
   if [[ "$dry_run" == "1" ]]; then
-    print -u2 -- "DRY-RUN POST (pipeline execute / github) $url"
-    print -u2 -- "  account=$account host=$host moduleType=$module_type"
+    print -u2 -- "DRY-RUN hctl pipeline-execute post-pipeline-execute-with-input-set-yaml"
+    print -u2 -- "  profile=$profile account=$account moduleType=$module_type"
     print -u2 -- "  org=$org project=$project pipeline=$pipeline_id"
     [[ -n "$input_set" ]] && print -u2 -- "  inputSet=$input_set"
     [[ -n "$branch" ]] && print -u2 -- "  branch=$branch"
-    print -u2 -- "  headers: content-type: application/yaml, X-Api-Key: ***"
-    print -u2 -- "  body: (empty yaml)"
+    "${cmd[@]}" --dry-run --curl 1>&2 || true
     return 0
   fi
 
-  local resp http_code=0 curl_ec=0
-  # Empty YAML body is accepted when the pipeline has no required runtime inputs.
-  resp="$(
-    hts_curl -sS -X POST \
-      -H 'content-type: application/yaml' \
-      -H "X-Api-Key: ${api_key}" \
-      --url "$url" \
-      -d '' \
-      -w $'\n%{http_code}'
-  )" || curl_ec=$?
-
-  if (( curl_ec != 0 )); then
-    hts_err "curl failed (exit $curl_ec) executing pipeline"
+  local resp ec=0 errfile
+  errfile="$(mktemp "${TMPDIR:-/tmp}/hts-hctl.XXXXXX")" || {
+    hts_err "could not create temp file"
+    return 1
+  }
+  resp="$("${cmd[@]}" 2>"$errfile")" || ec=$?
+  if (( ec != 0 )); then
+    local err
+    err="$(/bin/cat "$errfile" 2>/dev/null || true)"
+    rm -f "$errfile"
+    if [[ -n "$resp" ]]; then
+      print -- "$resp"
+      local msg
+      msg="$(print -- "$resp" | hts_trigger_message)"
+      [[ -n "$msg" ]] && hts_err "hctl execute failed for $org/$project/$pipeline_id: $msg"
+    fi
+    [[ -n "$err" ]] && hts_err "$err"
+    (( ec != 0 )) && [[ -z "$resp" && -z "$err" ]] && \
+      hts_err "hctl execute failed (exit $ec) for $org/$project/$pipeline_id"
     return 1
   fi
-
-  http_code="${resp##*$'\n'}"
-  resp="${resp%$'\n'*}"
+  rm -f "$errfile"
 
   if [[ -z "$resp" ]]; then
-    hts_err "empty response from Harness (HTTP ${http_code:-?})"
+    hts_err "empty response from hctl pipeline-execute"
     return 1
   fi
-
   print -- "$resp"
-  if [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
-    hts_err "Harness auth failed (HTTP $http_code) — check api_key on profile '$profile'"
-  fi
   return 0
 }
 
@@ -288,7 +292,7 @@ hts_fire_entry() {
       hts_fire_custom_trigger "$profile" "$org" "$project" "$pipeline_id" "$trigger" "$dry_run"
       ;;
     *)
-      # github / execute: optional input set via trigger field
+      # github / execute via hctl; $trigger holds optional input_set id only
       hts_fire_pipeline_execute "$profile" "$org" "$project" "$pipeline_id" "$module" "$dry_run" "$trigger" "$branch"
       ;;
   esac
