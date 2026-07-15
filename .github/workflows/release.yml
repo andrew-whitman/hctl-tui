@@ -36,13 +36,63 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release ${TAG} already exists; skipping."
             exit 0
           fi
 
+          prev_tag="$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)"
+          if [[ -n "$prev_tag" ]]; then
+            range="${prev_tag}..HEAD"
+          else
+            range="HEAD"
+          fi
+
+          NOTES_FILE="$(mktemp)"
+          PREV_TAG="$prev_tag" RANGE="$range" TAG="$TAG" REPO="$REPO" python3 - <<'PY' > "$NOTES_FILE"
+          import os
+          import subprocess
+
+          range_spec = os.environ["RANGE"]
+          prev_tag = os.environ.get("PREV_TAG", "")
+          tag = os.environ["TAG"]
+          repo = os.environ["REPO"]
+
+          log = subprocess.check_output(
+              [
+                  "git",
+                  "log",
+                  "--no-merges",
+                  "--pretty=format:%s%x1f%b%x1e",
+                  range_spec,
+              ],
+              text=True,
+          )
+
+          print("## What's Changed\n")
+          entries = [e for e in log.split("\x1e") if e.strip()]
+          if not entries:
+              print("_No commits in this release._\n")
+          else:
+              for entry in entries:
+                  subject, _, body = entry.partition("\x1f")
+                  subject = subject.strip()
+                  body = body.strip()
+                  if not subject:
+                      continue
+                  print(f"- **{subject}**")
+                  if body:
+                      for line in body.splitlines():
+                          print(f"  {line}" if line.strip() else "")
+                  print()
+
+          if prev_tag:
+              print(f"**Compare:** https://github.com/{repo}/compare/{prev_tag}...{tag}")
+          PY
+
           gh release create "$TAG" \
             --title "hctl-tui ${VERSION}" \
-            --generate-notes \
+            --notes-file "$NOTES_FILE" \
             --target "${{ github.sha }}"
