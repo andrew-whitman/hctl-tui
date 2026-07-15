@@ -103,7 +103,7 @@ entries: []
 Flat home menu (active hctl profile used by default — no per-action picker):
 
 - Run test suite → module (skipped if one) → Run all / Dry-run all / **Select pipelines** (checklist) / Filter then run
-- Add pipeline → alias, org, project, pipeline id, trigger id, set
+- Add pipeline → module (pick existing or New module…) → alias, org, project, pipeline id, trigger id, set
 - List pipelines / Remove pipeline (alias chooser)
 - Export / Import → share matrices + redacted profile stubs across machines
 - Profiles / Settings (looping submenus)

@@ -183,6 +183,42 @@ hts_tui_pick_module() {
     "${sel_args[@]}" "${modules[@]}"
 }
 
+# Pick an existing module or type a new name (for Add pipeline).
+# usage: hts_tui_pick_or_create_module profile [header]
+hts_tui_pick_or_create_module() {
+  local profile="$1" header="${2:-Module}"
+  local modules=() m choice def
+  def="$(hts_default_module)"
+  while IFS= read -r m; do
+    [[ -n "$m" ]] && modules+=("$m")
+  done < <(hts_list_modules "$profile")
+
+  if (( ${#modules[@]} > 0 )); then
+    local sel_args=()
+    if [[ -n "$def" ]]; then
+      for m in "${modules[@]}"; do
+        if [[ "$m" == "$def" ]]; then
+          sel_args=(--selected "$def")
+          break
+        fi
+      done
+    fi
+    choice="$(
+      hts_gum_pick --height="$(hts_gum_choose_height)" --header "$header" \
+        "${sel_args[@]}" "${modules[@]}" "New module…"
+    )" || return 1
+    if [[ "$choice" != "New module…" ]]; then
+      print -- "$choice"
+      return 0
+    fi
+  fi
+
+  m="$(hts_tty_ask_keep "Module" "$def")" || return 1
+  m="$(hts_trim "$m")"
+  [[ -n "$m" ]] || return 1
+  print -- "$m"
+}
+
 hts_tui_main() {
   hts_require_deps tui || return 1
   hts_ensure_config
@@ -335,7 +371,9 @@ hts_tui_matrix_add() {
   hts_profile_use "$profile" >/dev/null
 
   local module add_alias add_org add_project add_pipeline add_trigger add_set
-  module="$(hts_default_module)"
+
+  hts_tui_clear
+  module="$(hts_tui_pick_or_create_module "$profile" "Add · module")" || return 0
 
   hts_tui_clear
   {
@@ -356,6 +394,7 @@ hts_tui_matrix_add() {
   hts_tui_clear
   {
     print -- "Confirm — will save EXACTLY these fields:"
+    print -- "  module:   $module"
     print -- "  alias:    $add_alias"
     print -- "  org:      $add_org"
     print -- "  project:  $add_project"
@@ -396,7 +435,7 @@ PY
 
   hts_tui_clear
   hts_gum_box \
-    "Saved: $add_alias" \
+    "Saved: $add_alias  ($module)" \
     "${saved:-$add_org / $add_project / $add_pipeline}"
   hts_tui_pause "Enter — done"
 }
