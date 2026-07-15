@@ -158,10 +158,7 @@ hts_fire_custom_trigger() {
   url="${host}/gateway/pipeline/api/webhook/custom/v2?accountIdentifier=$(hts_urlencode "$account")&orgIdentifier=$(hts_urlencode "$org")&projectIdentifier=$(hts_urlencode "$project")&pipelineIdentifier=$(hts_urlencode "$pipeline_id")&triggerIdentifier=$(hts_urlencode "$trigger_id")"
 
   if [[ "$dry_run" == "1" ]]; then
-    print -u2 -- "DRY-RUN POST (custom webhook) $url"
-    print -u2 -- "  account=$account host=$host"
-    print -u2 -- "  headers: content-type: application/json, X-Api-Key: ***"
-    print -u2 -- "  body: {}"
+    hts_log "dry-run  custom  ${org}/${project}/${pipeline_id}  trigger=${trigger_id}"
     return 0
   fi
 
@@ -574,12 +571,13 @@ hts_fetch_trigger_json() {
 
 hts_fire_pipeline_execute() {
   # Args: profile org project pipeline_id module dry_run
-  #        [trigger_id] [branch] [repo] [connector] [input_set]
+  #        [trigger_id] [branch] [repo] [connector] [input_set] [alias]
   # Fetches GitHub/webhook trigger config, resolves inputYaml / <+trigger.*>,
   # converts PR build → branch, then executes via
   # hctl pipeline-execute post-pipeline-execute-with-input-set-yaml --body @file
   local profile="$1" org="$2" project="$3" pipeline_id="$4" module="$5" dry_run="${6:-0}"
   local trigger_id="${7:-}" branch="${8:-}" repo="${9:-}" connector="${10:-}" input_set="${11:-}"
+  local alias="${12:-}"
   local account
   account="$(hts_hctl_profile_field "$profile" account)"
 
@@ -615,7 +613,7 @@ hts_fire_pipeline_execute() {
 
   if [[ -n "$trigger_id" ]]; then
     if [[ "$dry_run" == "1" && "$account" == "ACCOUNT" ]]; then
-      print -u2 -- "DRY-RUN would: hctl triggers get-trigger --trigger-identifier $trigger_id --target-identifier $pipeline_id"
+      : # skip get-trigger without a real account; summary still printed below
     else
       trig_file="$(hts_mktemp hts-trigger)" || {
         hts_err "could not create temp trigger file"
@@ -686,26 +684,13 @@ for w in json.load(sys.stdin).get("warnings") or []:
   fi
 
   if [[ "$dry_run" == "1" ]]; then
-    print -u2 -- "DRY-RUN hctl pipeline-execute post-pipeline-execute-with-input-set-yaml"
-    print -u2 -- "  profile=$profile account=$account"
-    print -u2 -- "  org=$org project=$project pipeline=$pipeline_id"
-    [[ -n "$trigger_id" ]] && print -u2 -- "  trigger=$trigger_id (get-trigger → inputYaml|inputSetRefs)"
+    local inputs="none"
     if [[ -n "$body_file" ]]; then
-      print -u2 -- "  inputs=inputYaml (--body @file)"
+      inputs="inputYaml"
     elif [[ -n "$input_set" ]]; then
-      print -u2 -- "  inputs=inputSetRefs/input_set ($input_set)"
-    else
-      print -u2 -- "  inputs=(none)"
+      inputs="inputSet:${input_set}"
     fi
-    [[ -n "$branch" ]] && print -u2 -- "  branch=$branch" || print -u2 -- "  branch=(none — set for git-backed pipelines)"
-    [[ -n "$repo" ]] && print -u2 -- "  repo=$repo"
-    [[ -n "$connector" ]] && print -u2 -- "  connector=$connector"
-    if [[ -n "$body_file" && -f "$body_file" ]]; then
-      local nbytes
-      nbytes="$(/usr/bin/wc -c <"$body_file" 2>/dev/null | tr -d '[:space:]')"
-      print -u2 -- "  body=@file (${nbytes:-?} bytes resolved; omitted from dry-run log)"
-    fi
-    # Summary only — do not dump inputYaml or hctl --curl (both are huge).
+    hts_log "dry-run  ${alias:+$alias  }execute  ${org}/${project}/${pipeline_id}  branch=${branch:--}  trigger=${trigger_id:--}  inputs=${inputs}${repo:+  repo=${repo}}${connector:+  connector=${connector}}"
     hts_rm -f "$body_file"
     return 0
   fi
@@ -752,17 +737,22 @@ for w in json.load(sys.stdin).get("warnings") or []:
 
 hts_fire_entry() {
   # Args: profile module type org project pipeline_id trigger dry_run
-  #       [branch] [repo] [connector] [input_set]
+  #       [branch] [repo] [connector] [input_set] [alias]
   local profile="$1" module="$2" etype="$3" org="$4" project="$5" pipeline_id="$6"
   local trigger="$7" dry_run="${8:-0}" branch="${9:-}" repo="${10:-}" connector="${11:-}" input_set="${12:-}"
+  local alias="${13:-}"
   etype="$(hts_entry_type "$etype")"
   case "$etype" in
     custom)
+      if [[ "$dry_run" == "1" ]]; then
+        hts_log "dry-run  ${alias:+$alias  }custom  ${org}/${project}/${pipeline_id}  trigger=${trigger}"
+        return 0
+      fi
       hts_fire_custom_trigger "$profile" "$org" "$project" "$pipeline_id" "$trigger" "$dry_run"
       ;;
     *)
       hts_fire_pipeline_execute "$profile" "$org" "$project" "$pipeline_id" "$module" "$dry_run" \
-        "$trigger" "$branch" "$repo" "$connector" "$input_set"
+        "$trigger" "$branch" "$repo" "$connector" "$input_set" "$alias"
       ;;
   esac
 }
@@ -949,9 +939,11 @@ for e in json.load(sys.stdin):
 
   for line in "${planned[@]}"; do
     IFS=$'\t' read -r alias etype trigger org project pid repo connector input_set branch <<<"$line"
-    hts_log "→ $alias  type=$etype  org=$org project=$project pipeline=$pid branch=${branch:-(-)} trigger=${trigger:-(-)} repo=${repo:-(-)}"
+    if [[ "$dry_run" != "1" ]]; then
+      hts_log "→ $alias  type=$etype  org=$org project=$project pipeline=$pid branch=${branch:-(-)} trigger=${trigger:-(-)} repo=${repo:-(-)}"
+    fi
     fire_ec=0
-    resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "$dry_run" "$branch" "$repo" "$connector" "$input_set")" || fire_ec=$?
+    resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "$dry_run" "$branch" "$repo" "$connector" "$input_set" "$alias")" || fire_ec=$?
     if [[ "$dry_run" == "1" ]]; then
       trig_status="DRY-RUN"
       ui_url=""
