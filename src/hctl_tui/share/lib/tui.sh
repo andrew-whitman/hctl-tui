@@ -1,16 +1,50 @@
 # gum-based TUI flows for hctl-tui.
 # shellcheck shell=zsh
 
+# Esc / cancel → return to the home menu.
+# Uses a flag file so cancel survives $(...) subshells (gum pick/input capture).
+hts_tui_request_home() {
+  HTS_TUI_GO_HOME=1
+  if [[ -z "${HTS_TUI_GO_HOME_FILE:-}" ]]; then
+    HTS_TUI_GO_HOME_FILE="${TMPDIR:-/tmp}/hts-tui-go-home.${UID:-$$}"
+  fi
+  print -n -- 1 >"$HTS_TUI_GO_HOME_FILE" 2>/dev/null || true
+}
+
+hts_tui_clear_go_home() {
+  HTS_TUI_GO_HOME=0
+  if [[ -n "${HTS_TUI_GO_HOME_FILE:-}" ]]; then
+    hts_rm -f "$HTS_TUI_GO_HOME_FILE" 2>/dev/null || true
+  fi
+  hts_rm -f "${TMPDIR:-/tmp}/hts-tui-go-home.${UID:-$$}" 2>/dev/null || true
+}
+
+hts_tui_aborted() {
+  [[ "${HTS_TUI_GO_HOME:-0}" == "1" ]] && return 0
+  if [[ -n "${HTS_TUI_GO_HOME_FILE:-}" && -s "${HTS_TUI_GO_HOME_FILE}" ]]; then
+    HTS_TUI_GO_HOME=1
+    return 0
+  fi
+  if [[ -s "${TMPDIR:-/tmp}/hts-tui-go-home.${UID:-$$}" ]]; then
+    HTS_TUI_GO_HOME=1
+    return 0
+  fi
+  return 1
+}
+
 # Use the alternate screen buffer so menus redraw in place (like vim/htop)
 # instead of stacking boxes in the scrollback.
 hts_tui_enter() {
   HTS_TUI_ACTIVE=1
+  HTS_TUI_GO_HOME_FILE="$(hts_mktemp tui-home 2>/dev/null || print -- "${TMPDIR:-/tmp}/hts-tui-go-home.${UID:-$$}")"
+  hts_tui_clear_go_home
   printf '\e[?1049h' >/dev/tty 2>/dev/null || printf '\e[?1049h'
   hts_tui_clear
 }
 
 hts_tui_leave() {
   HTS_TUI_ACTIVE=0
+  hts_tui_clear_go_home
   printf '\e[?1049l' >/dev/tty 2>/dev/null || printf '\e[?1049l'
 }
 
@@ -23,7 +57,11 @@ hts_tui_clear() {
 hts_tui_pause() {
   local msg="${1:-Press Enter}"
   print -- "" >/dev/tty 2>/dev/null || print -- ""
-  hts_gum input --placeholder "$msg" --value "" </dev/null >/dev/null || true
+  if ! hts_gum input --placeholder "$msg" --value "" </dev/null >/dev/null; then
+    hts_tui_request_home
+    return 1
+  fi
+  return 0
 }
 
 hts_gum_choose_height() {
@@ -36,12 +74,19 @@ hts_gum_choose_height() {
 }
 
 hts_gum_pick() {
+  # Prints the selected choice. Esc/cancel → request home + non-zero.
   unsetopt xtrace verbose 2>/dev/null || true
-  if [[ -r /dev/tty ]]; then
-    hts_gum choose "$@" </dev/tty
-  else
-    hts_gum choose "$@"
+  local out ec=0
+  out="$(hts_mktemp gum-pick)" || return 1
+  # Stdin /dev/null so gum opens /dev/tty for the UI (same pattern as hts_gum_input).
+  if ! hts_gum choose "$@" </dev/null >"$out"; then
+    ec=$?
+    hts_rm -f "$out"
+    hts_tui_request_home
+    return "$ec"
   fi
+  /bin/cat "$out"
+  hts_rm -f "$out"
 }
 
 # Multi-select checklist (space to toggle, enter to confirm).
@@ -55,11 +100,16 @@ hts_gum_checklist() {
     --selected-prefix="[x] "
     --unselected-prefix="[ ] "
   )
-  if [[ -r /dev/tty ]]; then
-    hts_gum choose "${args[@]}" "$@" </dev/tty
-  else
-    hts_gum choose "${args[@]}" "$@"
+  local out ec=0
+  out="$(hts_mktemp gum-check)" || return 1
+  if ! hts_gum choose "${args[@]}" "$@" </dev/null >"$out"; then
+    ec=$?
+    hts_rm -f "$out"
+    hts_tui_request_home
+    return "$ec"
   fi
+  /bin/cat "$out"
+  hts_rm -f "$out"
 }
 
 hts_gum_input() {
@@ -71,25 +121,89 @@ hts_gum_input() {
   if ! hts_gum input --value="" "$@" </dev/null >"$out"; then
     ec=$?
     hts_rm -f "$out"
+    hts_tui_request_home
     return "$ec"
   fi
   /bin/cat "$out"
   hts_rm -f "$out"
 }
 
+# Cancelable line read: Esc alone returns to home; arrow keys ignored.
+# Echoes typed characters; prints the final line on stdout.
+# Note: often called inside $(...) — cancel uses hts_tui_request_home (flag file).
+hts_tty_read_line_cancelable() {
+  local buf="" c rest more ord
+  local KEYTIMEOUT=1
+  local stty_saved=""
+  # Disable kernel echo; we echo ourselves (avoids double characters).
+  stty_saved="$(stty -g </dev/tty 2>/dev/null || true)"
+  stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null || true
+  {
+    while true; do
+      if ! read -r -k 1 c </dev/tty 2>/dev/null; then
+        hts_tui_request_home
+        return 1
+      fi
+      # Byte value of first character (27 = Esc)
+      ord=0
+      printf -v ord '%d' "'$c" 2>/dev/null || ord=0
+      if (( ord == 27 )); then
+        rest=""
+        if read -t 0.05 -r -k 1 rest </dev/tty 2>/dev/null; then
+          while read -t 0.05 -r -k 1 more </dev/tty 2>/dev/null; do
+            [[ "$more" == [~A-Za-z] ]] && break
+          done
+          continue
+        fi
+        print -- "" >/dev/tty 2>/dev/null || true
+        hts_tui_request_home
+        return 1
+      fi
+      case "$c" in
+        $'\n'|$'\r')
+          print -- "" >/dev/tty 2>/dev/null || true
+          print -- "$buf"
+          return 0
+          ;;
+        $'\x7f'|$'\b')
+          if [[ -n "$buf" ]]; then
+            buf="${buf%?}"
+            printf '\b \b' >/dev/tty 2>/dev/null || true
+          fi
+          ;;
+        $'\x03')
+          print -- "" >/dev/tty 2>/dev/null || true
+          hts_tui_request_home
+          return 1
+          ;;
+        *)
+          if (( ord < 32 )); then
+            continue
+          fi
+          buf+="$c"
+          print -n -- "$c" >/dev/tty 2>/dev/null || true
+          ;;
+      esac
+    done
+  } always {
+    [[ -n "$stty_saved" ]] && stty "$stty_saved" </dev/tty 2>/dev/null || true
+  }
+}
+
 # Reliable line prompts for multi-field forms (no gum $(...) shifting).
+# Esc cancels and returns to the home menu when the TUI is active.
 # usage: hts_tty_ask <label> [required=1]
 hts_tty_ask() {
   local label="$1" required="${2:-1}" val=""
   while true; do
     print -n -- "$label: " >/dev/tty 2>/dev/null || print -n -- "$label: "
-    IFS= read -r val </dev/tty || return 1
+    val="$(hts_tty_read_line_cancelable)" || return 1
     val="$(hts_trim "$val")"
     if [[ -n "$val" || "$required" != "1" ]]; then
       print -- "$val"
       return 0
     fi
-    print -- "(required)" >/dev/tty 2>/dev/null || print -- "(required)"
+    print -- "(required — Esc to cancel)" >/dev/tty 2>/dev/null || print -- "(required — Esc to cancel)"
   done
 }
 
@@ -101,7 +215,7 @@ hts_tty_ask_keep() {
   local shown="${current:-(empty)}"
   while true; do
     print -n -- "$label [$shown]: " >/dev/tty 2>/dev/null || print -n -- "$label [$shown]: "
-    IFS= read -r val </dev/tty || return 1
+    val="$(hts_tty_read_line_cancelable)" || return 1
     val="$(hts_trim "$val")"
     if [[ -z "$val" ]]; then
       print -- "$current"
@@ -109,8 +223,8 @@ hts_tty_ask_keep() {
     fi
     if [[ "$val" == "-" ]]; then
       if [[ "$required" == "1" ]]; then
-        print -- "(required — enter a value, or leave blank to keep)" >/dev/tty 2>/dev/null \
-          || print -- "(required — enter a value, or leave blank to keep)"
+        print -- "(required — enter a value, blank keep, or Esc to cancel)" >/dev/tty 2>/dev/null \
+          || print -- "(required — enter a value, blank keep, or Esc to cancel)"
         continue
       fi
       print -- ""
@@ -229,13 +343,14 @@ hts_tui_main() {
 
   while true; do
     unsetopt xtrace verbose 2>/dev/null || true
+    hts_tui_clear_go_home
     hts_tui_clear
     local choice="" active
     active="$(hts_active_profile 2>/dev/null || print default)"
     choice="$(
       hts_gum_pick \
         --height="$(hts_gum_choose_height)" \
-        --header "Harness Test Suite  ·  profile: ${active}" \
+        --header "Harness Test Suite  ·  profile: ${active}  ·  Esc=quit" \
         "Run test suite" \
         "Add pipeline" \
         "Edit pipeline" \
@@ -306,8 +421,9 @@ hts_tui_run_suite() {
     "Select pipelines")
       hts_tui_clear
       aliases="$(hts_tui_pick_aliases "$profile" "$module")" || {
+        hts_tui_aborted && return 0
         hts_gum_box "No pipelines selected."
-        hts_tui_pause
+        hts_tui_pause || true
         return 0
       }
       hts_tui_clear
@@ -346,6 +462,7 @@ hts_tui_run_suite() {
       print -- "You will enter the app/source branch for each pipeline first"
       print -- "(the repo under test — not the pipeline template branch), then triggers start."
     fi
+    print -- "Esc cancels and returns to the home menu."
     print -- ""
     hts_preview_matrix "$profile" "$module" "$tech" "$set_" "$aliases"
   } | hts_tui_show
@@ -353,8 +470,9 @@ hts_tui_run_suite() {
   hts_gum confirm "Continue?" || return 0
 
   hts_tui_clear
-  hts_run_matrix "$profile" "$module" "$tech" "$set_" "$aliases" "$dry_run" "$open_urls"
-  hts_tui_pause "Enter — back to menu"
+  hts_run_matrix "$profile" "$module" "$tech" "$set_" "$aliases" "$dry_run" "$open_urls" || true
+  hts_tui_aborted && return 0
+  hts_tui_pause "Enter — back to menu" || true
 }
 
 hts_tui_ask() {
@@ -538,20 +656,22 @@ hts_tui_matrix_edit() {
 
   hts_tui_clear
   module="$(hts_tui_pick_module "$profile" "Edit · module")" || {
+    hts_tui_aborted && return 0
     hts_gum_box "No pipelines yet."
-    hts_tui_pause
+    hts_tui_pause || true
     return 0
   }
 
   alias="$(hts_tui_pick_alias "$profile" "$module" "Edit · pick pipeline")" || {
+    hts_tui_aborted && return 0
     hts_gum_box "Matrix is empty."
-    hts_tui_pause
+    hts_tui_pause || true
     return 0
   }
 
   entry="$(hts_matrix_get_entry_json "$profile" "$module" "$alias")" || {
     hts_gum_box_error "Could not load: $alias"
-    hts_tui_pause
+    hts_tui_pause || true
     return 0
   }
 
@@ -612,13 +732,13 @@ q("cur_pipeline", p.get("identifier") or "")
     "${cur_tech:-java}" "$new_set" "$new_org" "$new_project" "$new_pipeline" \
     "${cur_type:-github}" "$cur_repo" "$cur_connector" >/dev/null || {
     hts_gum_box_error "Update failed"
-    hts_tui_pause
+    hts_tui_pause || true
     return 0
   }
 
   hts_tui_clear
   hts_gum_box "Updated: $new_alias" "$new_org / $new_project / $new_pipeline"
-  hts_tui_pause "Enter — done"
+  hts_tui_pause "Enter — done" || true
 }
 
 hts_tui_list_matrix() {
@@ -628,13 +748,14 @@ hts_tui_list_matrix() {
 
   hts_tui_clear
   module="$(hts_tui_pick_module "$profile" "List · module")" || {
+    hts_tui_aborted && return 0
     hts_gum_box "No pipelines yet."
-    hts_tui_pause
+    hts_tui_pause || true
     return 0
   }
   hts_tui_clear
   hts_matrix_list "$profile" "$module" 2>/dev/null | hts_tui_show
-  hts_tui_pause
+  hts_tui_pause || true
 }
 
 hts_tui_remove_entry() {
@@ -644,14 +765,16 @@ hts_tui_remove_entry() {
 
   hts_tui_clear
   module="$(hts_tui_pick_module "$profile" "Remove · module")" || {
+    hts_tui_aborted && return 0
     hts_gum_box "No pipelines yet."
-    hts_tui_pause
+    hts_tui_pause || true
     return 0
   }
 
   alias="$(hts_tui_pick_alias "$profile" "$module" "Remove · pick pipeline")" || {
+    hts_tui_aborted && return 0
     hts_gum_box "Matrix is empty."
-    hts_tui_pause
+    hts_tui_pause || true
     return 0
   }
 
@@ -659,18 +782,19 @@ hts_tui_remove_entry() {
   hts_matrix_remove "$profile" "$module" "$alias" >/dev/null
   hts_tui_clear
   hts_gum_box "Removed: $alias"
-  hts_tui_pause
+  hts_tui_pause || true
 }
 
 hts_tui_profiles() {
   while true; do
+    hts_tui_aborted && return 0
     hts_tui_clear
     local action active
     active="$(hts_active_profile 2>/dev/null || print -)"
     action="$(
       hts_gum_pick \
         --height="$(hts_gum_choose_height)" \
-        --header "Profiles  ·  active: ${active}" \
+        --header "Profiles  ·  active: ${active}  ·  Esc=home" \
         "Switch profile" \
         "List profiles" \
         "Init / create (hctl)" \
@@ -682,22 +806,22 @@ hts_tui_profiles() {
       "Switch profile")
         local names=() n p
         while IFS= read -r n; do [[ -n "$n" ]] && names+=("$n"); done < <(hts_profile_names)
-        (( ${#names[@]} )) || { hts_gum_box_error "No profiles."; hts_tui_pause; continue; }
+        (( ${#names[@]} )) || { hts_gum_box_error "No profiles."; hts_tui_pause || true; continue; }
         hts_tui_clear
-        p="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Switch to" --selected "$active" "${names[@]}")" || continue
+        p="$(hts_gum_pick --height="$(hts_gum_choose_height)" --header "Switch to  ·  Esc=home" --selected "$active" "${names[@]}")" || return 0
         hts_profile_use "$p" >/dev/null
         ;;
       "List profiles")
         hts_tui_clear
         hts_profile_list 2>/dev/null | hts_tui_show
-        hts_tui_pause
+        hts_tui_pause || return 0
         ;;
       "Init / create (hctl)")
         hts_tui_clear
         local name
-        name="$(hts_gum_input --placeholder "profile name (blank=default flow)")" || continue
+        name="$(hts_gum_input --placeholder "profile name (blank=default flow)")" || return 0
         hts_profile_init "${name:-}"
-        hts_tui_pause
+        hts_tui_pause || return 0
         ;;
       "Doctor")
         hts_tui_clear
@@ -710,6 +834,7 @@ hts_tui_profiles() {
 
 hts_tui_settings() {
   while true; do
+    hts_tui_aborted && return 0
     hts_tui_clear
     local action mod urls
     mod="$(hts_default_module)"
@@ -717,7 +842,7 @@ hts_tui_settings() {
     action="$(
       hts_gum_pick \
         --height="$(hts_gum_choose_height)" \
-        --header "Settings  ·  module=${mod}  open_urls=${urls}" \
+        --header "Settings  ·  module=${mod}  open_urls=${urls}  ·  Esc=home" \
         "Set default module" \
         "Toggle open_urls" \
         "Back"
@@ -726,7 +851,7 @@ hts_tui_settings() {
     case "$action" in
       "Set default module")
         hts_tui_clear
-        mod="$(hts_gum_input --value "$mod" --placeholder "default module")" || continue
+        mod="$(hts_gum_input --value "$mod" --placeholder "default module")" || return 0
         [[ -n "$mod" ]] || continue
         hts_cfg_set_str '.defaults.module' "$mod"
         ;;
@@ -742,12 +867,13 @@ hts_tui_settings() {
 
 hts_tui_transfer() {
   while true; do
+    hts_tui_aborted && return 0
     hts_tui_clear
     local action
     action="$(
       hts_gum_pick \
         --height="$(hts_gum_choose_height)" \
-        --header "Export / Import  ·  share matrices across machines" \
+        --header "Export / Import  ·  Esc=home" \
         "Export active profile" \
         "Export all profiles" \
         "Import bundle" \
@@ -760,7 +886,7 @@ hts_tui_transfer() {
         local out profile secrets=0 with_bh=0
         profile="$(hts_active_profile 2>/dev/null || print default)"
         [[ "$action" == "Export all profiles" ]] && profile=all
-        out="$(hts_gum_input --value "$(hts_transfer_default_out)" --placeholder "output directory")" || continue
+        out="$(hts_gum_input --value "$(hts_transfer_default_out)" --placeholder "output directory")" || return 0
         [[ -n "$out" ]] || continue
         if hts_gum confirm "Include API keys in the bundle? (usually no)"; then
           secrets=1
@@ -774,14 +900,14 @@ hts_tui_transfer() {
         else
           hts_gum_box_error "Export failed"
         fi
-        hts_tui_pause
+        hts_tui_pause || return 0
         ;;
       "Import bundle")
         hts_tui_clear
         local src as_profile="" force=0 with_bh=0
-        src="$(hts_gum_input --placeholder "path to export directory")" || continue
+        src="$(hts_gum_input --placeholder "path to export directory")" || return 0
         [[ -n "$src" ]] || continue
-        as_profile="$(hts_gum_input --placeholder "remap to profile (blank=keep names)")" || continue
+        as_profile="$(hts_gum_input --placeholder "remap to profile (blank=keep names)")" || return 0
         if hts_gum confirm "Overwrite existing matrix files?"; then
           force=1
         fi
@@ -794,7 +920,7 @@ hts_tui_transfer() {
         else
           hts_gum_box_error "Import failed (or nothing to import)"
         fi
-        hts_tui_pause
+        hts_tui_pause || return 0
         ;;
       Back|*) return 0 ;;
     esac

@@ -886,10 +886,14 @@ hts_prompt_run_branch() {
 
   while true; do
     hts_tty_print_n "${label}: "
-    if ! IFS= read -r val </dev/tty 2>/dev/null; then
-      # no tty — caller should have required --branch
-      print -- "$default"
-      return 0
+    if typeset -f hts_tty_read_line_cancelable >/dev/null 2>&1; then
+      val="$(hts_tty_read_line_cancelable)" || return 1
+    else
+      if ! IFS= read -r val </dev/tty 2>/dev/null; then
+        # no tty — caller should have required --branch
+        print -- "$default"
+        return 0
+      fi
     fi
     val="$(hts_trim "$val")"
     if [[ -z "$val" && -n "$default" ]]; then
@@ -906,9 +910,9 @@ hts_prompt_run_branch() {
       return 0
     fi
     if (( ${#recents[@]} )); then
-      hts_tty_print "(required — type a branch, pick 1..${#recents[@]}, or Enter for default)"
+      hts_tty_print "(required — type a branch, pick 1..${#recents[@]}, Enter for default, Esc to cancel)"
     else
-      hts_tty_print "(required — app/source repo under test, not pipeline template)"
+      hts_tty_print "(required — app/source repo under test; Esc to cancel)"
     fi
   done
 }
@@ -1038,6 +1042,11 @@ for e in json.load(sys.stdin):
         branch="$cli_branch"
       else
         branch="$(hts_prompt_run_branch "$profile" "$module" "$alias" "$org" "$project" "$pid")" || {
+          # Esc / cancel — abort the whole suite (TUI returns to home menu).
+          if typeset -f hts_tui_aborted >/dev/null 2>&1 && hts_tui_aborted; then
+            hts_err "cancelled"
+            return 1
+          fi
           hts_err "cancelled while prompting for branch ($alias)"
           skipped=$((skipped + 1))
           if [[ "$dry_run" == "1" ]]; then

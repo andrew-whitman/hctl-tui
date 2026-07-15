@@ -110,6 +110,8 @@ Flat home menu (active hctl profile used by default — no per-action picker):
 - Export / Import → share matrices + redacted profile stubs across machines
 - Profiles / Settings (looping submenus)
 
+**Esc** on any gum chooser/input (or line prompt) cancels and returns to the home menu. Esc on the home menu quits.
+
 **Select pipelines:** gum multi-select checklist (`space` toggle, `enter` confirm). Runs only the checked aliases (same as `hts run --alias a,b`).
 
 ## CLI (non-interactive)
