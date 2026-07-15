@@ -229,7 +229,8 @@ hts_watch_last_batch() {
   local started now elapsed all_done=0 timed_out=0
   started="$(hts_cmd date +%s)"
   local alias org project pid exec_id ui_url st
-  local detail status run_seq pipe_id plan_id short_id
+  # Note: zsh reserves readonly `status` (== $?); never use that name as a local.
+  local detail exec_status run_seq pipe_id plan_id short_id
   local -a table=()
   local any_err=0
 
@@ -250,14 +251,14 @@ hts_watch_last_batch() {
         all_done=0
         continue
       }
-      IFS=$'\t' read -r status run_seq pipe_id plan_id <<<"$(print -- "$detail" | hts_parse_execution_summary)"
-      status="${status:-UNKNOWN}"
+      IFS=$'\t' read -r exec_status run_seq pipe_id plan_id <<<"$(print -- "$detail" | hts_parse_execution_summary)"
+      exec_status="${exec_status:-UNKNOWN}"
       short_id="$exec_id"
       if (( ${#short_id} > 16 )); then
         short_id="${short_id:0:12}…"
       fi
-      table+=("${alias}"$'\t'"${status}"$'\t'"${run_seq}"$'\t'"${short_id}")
-      if ! hts_execution_status_is_terminal "$status"; then
+      table+=("${alias}"$'\t'"${exec_status}"$'\t'"${run_seq}"$'\t'"${short_id}")
+      if ! hts_execution_status_is_terminal "$exec_status"; then
         all_done=0
       fi
     done
@@ -376,9 +377,10 @@ hts_fetch_execution_logs() {
     return 1
   }
 
-  local detail status run_seq pipe_from_api _
+  # Note: zsh reserves readonly `status` (== $?); never use that name as a local.
+  local detail exec_status run_seq pipe_from_api _
   detail="$(hts_get_execution_detail_json "$profile" "$org" "$project" "$plan_id")" || return 1
-  IFS=$'\t' read -r status run_seq pipe_from_api _ <<<"$(print -- "$detail" | hts_parse_execution_summary)"
+  IFS=$'\t' read -r exec_status run_seq pipe_from_api _ <<<"$(print -- "$detail" | hts_parse_execution_summary)"
   [[ -n "$pipe_from_api" ]] && pipeline_id="$pipe_from_api"
 
   if [[ -z "$run_seq" ]]; then
@@ -386,14 +388,14 @@ hts_fetch_execution_logs() {
     return 1
   fi
 
-  if [[ "$force" != "1" ]] && hts_execution_status_is_running "$status"; then
-    hts_err "logs: execution $plan_id is still '$status' — wait until terminal (or pass --force)"
+  if [[ "$force" != "1" ]] && hts_execution_status_is_running "$exec_status"; then
+    hts_err "logs: execution $plan_id is still '$exec_status' — wait until terminal (or pass --force)"
     return 1
   fi
 
   local prefix job job_status link attempt max_attempts=36
   prefix="$(hts_log_blob_prefix "$account" "$pipeline_id" "$run_seq" "$plan_id")"
-  hts_log "→ logs $alias  status=$status runSequence=$run_seq"
+  hts_log "→ logs $alias  status=$exec_status runSequence=$run_seq"
   hts_log "  prefix=$prefix"
   hts_log "  dest=$dest"
 
@@ -448,7 +450,7 @@ hts_fetch_execution_logs() {
 
   HTS_META_ALIAS="$alias" HTS_META_ORG="$org" HTS_META_PROJECT="$project" \
     HTS_META_PIPELINE="$pipeline_id" HTS_META_PLAN="$plan_id" \
-    HTS_META_STATUS="$status" HTS_META_RUN="$run_seq" HTS_META_UI="$ui_hint" \
+    HTS_META_STATUS="$exec_status" HTS_META_RUN="$run_seq" HTS_META_UI="$ui_hint" \
     HTS_META_PREFIX="$prefix" HTS_META_DEST="$dest" \
     hts_python - <<'PY'
 import json, os, time
