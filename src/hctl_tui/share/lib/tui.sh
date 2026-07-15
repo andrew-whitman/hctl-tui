@@ -359,6 +359,7 @@ hts_tui_main() {
         "Export / Import" \
         "Profiles" \
         "Settings" \
+        "Help" \
         "Quit"
     )" || { hts_tui_leave; trap - EXIT INT TERM; return 0; }
 
@@ -371,6 +372,7 @@ hts_tui_main() {
       "Export / Import")  hts_tui_transfer || true ;;
       "Profiles")         hts_tui_profiles || true ;;
       "Settings")         hts_tui_settings || true ;;
+      "Help")             hts_tui_help || true ;;
       "Quit"|*)
         hts_tui_leave
         trap - EXIT INT TERM
@@ -378,6 +380,42 @@ hts_tui_main() {
         ;;
     esac
   done
+}
+
+hts_tui_help() {
+  hts_tui_clear
+  {
+    print -- "hctl-tui — how to use this TUI"
+    print -- ""
+    print -- "Navigation"
+    print -- "  ↑/↓     move  ·  Enter  select  ·  Esc  cancel → home menu"
+    print -- "  Esc on the home menu quits."
+    print -- ""
+    print -- "Home menu"
+    print -- "  Run test suite   Fire (or dry-run) pipelines from a matrix module"
+    print -- "  Add / Edit / List / Remove   Manage matrix entries"
+    print -- "  Export / Import  Share matrices (optional: branch history, API keys)"
+    print -- "  Profiles         Switch or create hctl auth profiles"
+    print -- "  Settings         Default module, open execution URLs"
+    print -- ""
+    print -- "Run test suite"
+    print -- "  1. Pick a module (skipped if only one exists)"
+    print -- "  2. Choose: Run all · Dry-run all · Select pipelines · Filter"
+    print -- "  3. Select pipelines: Space toggles, Enter confirms"
+    print -- "  4. Enter the app/source git branch per pipeline"
+    print -- "     (repo under test — not the Harness pipeline-template branch)"
+    print -- "  5. After a real run: optional Watch executions? / Fetch logs?"
+    print -- ""
+    print -- "Branch prompts"
+    print -- "  Recent branches for that pipeline appear as a numbered list."
+    print -- "  Enter = most recent  ·  type a number  ·  or type any branch name"
+    print -- "  History is local (~/.config/hctl-tui/branch-history.yaml)."
+    print -- "  Include it in export/import with --with-branch-history."
+    print -- ""
+    print -- "CLI tip: hts run --module ci --branch main --alias a1,a2"
+    print -- "Docs: README.md and hctl-tui-spec.md in the repo"
+  } | hts_tui_show
+  hts_tui_pause "Enter — back to menu" || true
 }
 
 hts_tui_run_suite() {

@@ -112,6 +112,7 @@ Flat home menu (active hctl profile used by default — no per-action picker):
 - List pipelines / Remove pipeline (alias chooser)
 - Export / Import → share matrices + redacted profile stubs across machines
 - Profiles / Settings (looping submenus)
+- **Help** → short in-TUI how-to (navigation, run flow, branches)
 
 **Esc** on any gum chooser/input (or line prompt) cancels and returns to the home menu. Esc on the home menu quits.
 
