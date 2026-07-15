@@ -77,6 +77,20 @@ hts_gum_input() {
   hts_rm -f "$out"
 }
 
+# Fuzzy-filter picker; options are remaining args. Captures via temp file like hts_gum_input.
+hts_gum_filter() {
+  unsetopt xtrace verbose 2>/dev/null || true
+  local out ec=0
+  out="$(hts_mktemp gum-filter)" || return 1
+  if ! hts_gum filter "$@" </dev/null >"$out"; then
+    ec=$?
+    hts_rm -f "$out"
+    return "$ec"
+  fi
+  /bin/cat "$out"
+  hts_rm -f "$out"
+}
+
 # Reliable line prompts for multi-field forms (no gum $(...) shifting).
 # usage: hts_tty_ask <label> [required=1]
 hts_tty_ask() {

@@ -77,6 +77,7 @@ hts doctor
 | `~/.config/hctl/config.json` | Auth (host, account, API key) — owned by **hctl** |
 | `~/.config/hctl-tui/config.yaml` | Active profile pointer + UI defaults |
 | `~/.config/hctl-tui/matrices/<profile>/<module>.yaml` | Test matrices |
+| `~/.config/hctl-tui/branch-history.yaml` | Recently used app/source branches (per pipeline) |
 
 ### Export / import
 

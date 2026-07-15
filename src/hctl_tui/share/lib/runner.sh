@@ -740,13 +740,121 @@ hts_fire_entry() {
   esac
 }
 
-hts_prompt_run_branch() {
-  # Prompt for the application source branch (not the pipeline-template branch).
-  # usage: hts_prompt_run_branch alias org project pipeline_id [default]
-  # org/project/pipeline_id kept for call-site compatibility; prompt shows alias only.
-  local alias="$1" _org="$2" _project="$3" _pipeline_id="$4" default="${5:-}"
-  local val="" label
+# Sentinel shown in the gum recent-branch picker (not a real git branch).
+HTS_BRANCH_OTHER_LABEL="Enter a different branch…"
+
+hts_branch_history_key() {
+  # Stable identity (survives alias renames): profile::module::org::project::pipeline_id
+  # usage: hts_branch_history_key profile module org project pipeline_id
+  local profile="$1" module="$2" org="$3" project="$4" pipeline_id="$5"
+  print -- "${profile}::${module}::${org}::${project}::${pipeline_id}"
+}
+
+hts_branch_history_list() {
+  # Print recent branches (most recent first), one per line.
+  # usage: hts_branch_history_list profile module org project pipeline_id
+  local key max_n
+  key="$(hts_branch_history_key "$@")"
+  max_n="${HTS_BRANCH_HISTORY_MAX:-10}"
+  [[ -f "$HTS_BRANCH_HISTORY_FILE" ]] || return 0
+  hts_python - "$HTS_BRANCH_HISTORY_FILE" "$key" "$max_n" <<'PY'
+import sys
+path, key, max_n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+try:
+    import yaml
+    data = yaml.safe_load(open(path)) or {}
+except Exception:
+    raise SystemExit(0)
+if not isinstance(data, dict):
+    raise SystemExit(0)
+raw = data.get(key) or []
+if not isinstance(raw, list):
+    raise SystemExit(0)
+seen = set()
+n = 0
+for b in raw:
+    if not isinstance(b, str):
+        continue
+    b = b.strip()
+    if not b or b in seen:
+        continue
+    seen.add(b)
+    print(b)
+    n += 1
+    if n >= max_n:
+        break
+PY
+}
+
+hts_branch_history_record() {
+  # Prepend branch for this pipeline; cap list length. No-op for empty branch.
+  # usage: hts_branch_history_record profile module org project pipeline_id branch
+  local profile="$1" module="$2" org="$3" project="$4" pipeline_id="$5" branch="$6"
+  branch="$(hts_trim "$branch")"
+  [[ -n "$branch" && -n "$pipeline_id" ]] || return 0
+  local key max_n
+  key="$(hts_branch_history_key "$profile" "$module" "$org" "$project" "$pipeline_id")"
+  max_n="${HTS_BRANCH_HISTORY_MAX:-10}"
+  /bin/mkdir -p "$HTS_CONFIG_DIR" 2>/dev/null || true
+  hts_python - "$HTS_BRANCH_HISTORY_FILE" "$key" "$branch" "$max_n" <<'PY'
+import sys
+path, key, branch, max_n = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+try:
+    import yaml
+except ImportError:
+    raise SystemExit(0)
+try:
+    data = yaml.safe_load(open(path)) or {}
+except FileNotFoundError:
+    data = {}
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+raw = data.get(key) or []
+if not isinstance(raw, list):
+    raw = []
+out = [branch]
+seen = {branch}
+for b in raw:
+    if not isinstance(b, str):
+        continue
+    b = b.strip()
+    if not b or b in seen:
+        continue
+    seen.add(b)
+    out.append(b)
+    if len(out) >= max_n:
+        break
+data[key] = out[:max_n]
+with open(path, "w") as f:
+    yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+PY
+}
+
+hts_prompt_run_branch_text() {
+  # Free-text branch prompt (gum input when available, else readline).
+  # usage: hts_prompt_run_branch_text alias [default]
+  local alias="$1" default="${2:-}" val="" label
   label="App/source branch for ${alias}"
+  if hts_have gum; then
+    local -a gargs=(--header "$label" --placeholder "app/source repo under test (not pipeline template)")
+    [[ -n "$default" ]] && gargs+=(--value "$default")
+    while true; do
+      val="$(hts_gum_input "${gargs[@]}")" || return 1
+      val="$(hts_trim "$val")"
+      if [[ -z "$val" && -n "$default" ]]; then
+        print -- "$default"
+        return 0
+      fi
+      if [[ -n "$val" ]]; then
+        print -- "$val"
+        return 0
+      fi
+      print -- "(required — app/source repo under test, not pipeline template)" >/dev/tty 2>/dev/null \
+        || print -- "(required — app/source repo under test, not pipeline template)"
+    done
+  fi
   if [[ -n "$default" ]]; then
     label="${label} [${default}]"
   fi
@@ -769,6 +877,51 @@ hts_prompt_run_branch() {
     print -- "(required — app/source repo under test, not pipeline template)" >/dev/tty 2>/dev/null \
       || print -- "(required — app/source repo under test, not pipeline template)"
   done
+}
+
+hts_prompt_run_branch() {
+  # Prompt for the application source branch (not the pipeline-template branch).
+  # Uses local recent-branch history + gum filter when available.
+  # usage: hts_prompt_run_branch profile module alias org project pipeline_id
+  local profile="$1" module="$2" alias="$3" org="$4" project="$5" pipeline_id="$6"
+  local -a recents=()
+  local line choice default=""
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    recents+=("$line")
+  done < <(hts_branch_history_list "$profile" "$module" "$org" "$project" "$pipeline_id")
+
+  if (( ${#recents[@]} )); then
+    default="${recents[1]}"
+  fi
+
+  if (( ${#recents[@]} )) && hts_have gum; then
+    local -a opts=("${recents[@]}" "$HTS_BRANCH_OTHER_LABEL")
+    local height
+    height=$(( ${#opts[@]} + 2 ))
+    if (( height < 5 )); then height=5; fi
+    if (( height > 15 )); then height=15; fi
+    choice="$(
+      hts_gum_filter \
+        --header "App/source branch for ${alias}" \
+        --placeholder "Filter recent branches…" \
+        --height "$height" \
+        -- "${opts[@]}"
+    )" || return 1
+    choice="$(hts_trim "$choice")"
+    if [[ -z "$choice" ]]; then
+      return 1
+    fi
+    if [[ "$choice" == "$HTS_BRANCH_OTHER_LABEL" ]]; then
+      hts_prompt_run_branch_text "$alias" ""
+      return $?
+    fi
+    print -- "$choice"
+    return 0
+  fi
+
+  hts_prompt_run_branch_text "$alias" "$default"
 }
 
 hts_run_matrix() {
@@ -895,7 +1048,7 @@ for e in json.load(sys.stdin):
       if [[ -n "$cli_branch" ]]; then
         branch="$cli_branch"
       else
-        branch="$(hts_prompt_run_branch "$alias" "$org" "$project" "$pid")" || {
+        branch="$(hts_prompt_run_branch "$profile" "$module" "$alias" "$org" "$project" "$pid")" || {
           hts_err "cancelled while prompting for branch ($alias)"
           skipped=$((skipped + 1))
           if [[ "$dry_run" == "1" ]]; then
@@ -982,6 +1135,9 @@ for e in json.load(sys.stdin):
       ui_url="$(print -- "$resp" | hts_trigger_ui_url "$host" "$account" "$org" "$project" "$pid")"
       if [[ "$trig_status" == "SUCCESS" ]]; then
         ok=$((ok + 1))
+        if [[ "$etype" != "custom" && -n "$branch" ]]; then
+          hts_branch_history_record "$profile" "$module" "$org" "$project" "$pid" "$branch" || true
+        fi
         if [[ "$open_urls" == "1" && -n "$ui_url" ]]; then
           hts_open_url "$ui_url"
         fi
