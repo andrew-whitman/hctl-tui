@@ -98,7 +98,7 @@ entries: []
 
 `type: github` fetches the webhook trigger (`hctl triggers get-trigger`), resolves `inputYaml`, and executes the pipeline. `type: custom` uses `trigger` as `triggerIdentifier` for the custom webhook API. Org/project/pipeline come from the entry; account and API key come from the selected hctl profile. At run time you choose the **application/source git branch** (the repo under test) per pipeline — or `hts run --branch` for all. This is not the pipeline-template / Git Experience branch.
 
-Interactive branch prompts are single-line TTY reads (answers stay in scrollback). When history exists for that pipeline, a numbered recent list is printed above the prompt; Enter accepts the default (most recent), or type a number / any branch name. History lives in `~/.config/hctl-tui/branch-history.yaml`, keyed by profile/module/org/project/pipeline id (not matrix alias), and is updated after a successful execute. It is not part of the matrix file and is not exported.
+Interactive branch prompts are single-line TTY reads (answers stay in scrollback). When history exists for that pipeline, a numbered recent list is printed above the prompt; Enter accepts the default (most recent), or type a number / any branch name. History lives in `~/.config/hctl-tui/branch-history.yaml`, keyed by profile/module/org/project/pipeline id (not matrix alias), and is updated after a successful execute. It is not part of the matrix file. Opt in with `hts export|import --with-branch-history` (TUI confirm) to copy/merge it between machines.
 
 ## TUI flow
 
@@ -133,8 +133,8 @@ hts matrix add --module ci --alias A --trigger T --tech TECH --set SET \
 hts matrix remove --module ci --alias A [--profile NAME]
 
 # Export / import (portable bundle; API keys redacted by default)
-hts export [--out DIR] [--profile NAME|all] [--include-secrets] [--no-config]
-hts import PATH [--as NAME] [--force] [--with-config] [--no-profiles]
+hts export [--out DIR] [--profile NAME|all] [--include-secrets] [--no-config] [--with-branch-history]
+hts import PATH [--as NAME] [--force] [--with-config] [--no-profiles] [--with-branch-history]
 
 # Health
 hts doctor
@@ -149,9 +149,11 @@ manifest.yaml                 # format: hctl-tui-export, format_version: 1
 matrices/<profile>/*.yaml     # copied matrix modules
 profiles/<profile>.json       # host/account/org/project; api_key empty unless --include-secrets
 hctl-tui-config.yaml          # optional local defaults (omit with --no-config)
+branch-history.yaml           # optional recent branches (--with-branch-history)
 ```
 
-`hts import` merges matrices into `~/.config/hctl-tui/matrices/` (skip existing unless `--force`), optionally merges hctl profile stubs (no blank key overwrite), and remaps a single-profile bundle with `--as NAME`.
+`hts import` merges matrices into `~/.config/hctl-tui/matrices/` (skip existing unless `--force`), optionally merges hctl profile stubs (no blank key overwrite), and remaps a single-profile bundle with `--as NAME`. Pass `--with-branch-history` to merge `branch-history.yaml` (incoming branches preferred; `--force` replaces per-pipeline keys).
+
 ## Runner contract
 
 1. Resolve active hctl profile (`--profile`, else `config.yaml` → `active_hctl_profile`, else hctl current).

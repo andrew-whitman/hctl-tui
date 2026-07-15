@@ -53,7 +53,9 @@ Usage:
   hts profile list|use NAME|init [NAME]
   hts matrix list|add|edit|remove [options]
   hts export [--out DIR] [--profile NAME|all] [--include-secrets] [--no-config]
+             [--with-branch-history]
   hts import PATH [--as NAME] [--force] [--with-config] [--no-profiles]
+             [--with-branch-history]
 
 Init installs peer tools when missing
 (prefer uv for hctl; brew/GitHub for gum).
@@ -100,6 +102,7 @@ Export / import:
   API keys are omitted unless --include-secrets. Import merges matrices;
   existing files are skipped unless --force. Recipients set their own API key
   via hts profile init / hctl.
+  Pass --with-branch-history to include/merge recent app/source branch lists.
 EOF
 }
 
@@ -377,7 +380,7 @@ hts_cmd_doctor() {
 }
 
 hts_cmd_export() {
-  local out="" profile="" include_secrets=0 include_config=1
+  local out="" profile="" include_secrets=0 include_config=1 include_branch_history=0
   while (( $# )); do
     case "$1" in
       --out|-o) out="$2"; shift 2 ;;
@@ -385,11 +388,13 @@ hts_cmd_export() {
       --all) profile=all; shift ;;
       --include-secrets) include_secrets=1; shift ;;
       --no-config) include_config=0; shift ;;
+      --with-branch-history) include_branch_history=1; shift ;;
       -h|--help)
-        print -- "usage: hts export [--out DIR] [--profile NAME|all] [--include-secrets] [--no-config]"
+        print -- "usage: hts export [--out DIR] [--profile NAME|all] [--include-secrets] [--no-config] [--with-branch-history]"
         print -- "  Writes a portable bundle: matrices + redacted hctl profile stubs."
         print -- "  Default: active profile. Use --profile all for every profile."
         print -- "  API keys are redacted unless --include-secrets."
+        print -- "  --with-branch-history includes recent app/source branches (per pipeline)."
         return 0
         ;;
       *)
@@ -407,22 +412,24 @@ hts_cmd_export() {
   hts_ensure_config
   [[ -n "$out" ]] || out="$(hts_transfer_default_out)"
   [[ -n "$profile" ]] || profile="$(hts_active_profile)"
-  hts_export_bundle "$out" "$profile" "$include_secrets" "$include_config"
+  hts_export_bundle "$out" "$profile" "$include_secrets" "$include_config" "$include_branch_history"
 }
 
 hts_cmd_import() {
-  local src="" as_profile="" force=0 import_config=0 import_profiles=1
+  local src="" as_profile="" force=0 import_config=0 import_profiles=1 import_branch_history=0
   while (( $# )); do
     case "$1" in
       --as|--profile) as_profile="$2"; shift 2 ;;
       --force|-f) force=1; shift ;;
       --with-config) import_config=1; shift ;;
       --no-profiles) import_profiles=0; shift ;;
+      --with-branch-history) import_branch_history=1; shift ;;
       -h|--help)
-        print -- "usage: hts import PATH [--as NAME] [--force] [--with-config] [--no-profiles]"
+        print -- "usage: hts import PATH [--as NAME] [--force] [--with-config] [--no-profiles] [--with-branch-history]"
         print -- "  Imports matrices (and optional hctl profile stubs) from an export bundle."
         print -- "  Existing matrix files are skipped unless --force."
         print -- "  --as NAME remaps a single-profile bundle into that profile name."
+        print -- "  --with-branch-history merges recent app/source branch lists from the bundle."
         return 0
         ;;
       *)
@@ -436,10 +443,10 @@ hts_cmd_import() {
     esac
   done
 
-  [[ -n "$src" ]] || { hts_die "usage: hts import PATH [--as NAME] [--force] [--with-config] [--no-profiles]"; return 1; }
+  [[ -n "$src" ]] || { hts_die "usage: hts import PATH [--as NAME] [--force] [--with-config] [--no-profiles] [--with-branch-history]"; return 1; }
   hts_require_deps matrix || return 1
   hts_ensure_config
-  hts_import_bundle "$src" "$as_profile" "$force" "$import_config" "$import_profiles"
+  hts_import_bundle "$src" "$as_profile" "$force" "$import_config" "$import_profiles" "$import_branch_history"
 }
 
 main() {

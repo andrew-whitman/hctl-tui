@@ -757,7 +757,7 @@ hts_tui_transfer() {
     case "$action" in
       "Export active profile"|"Export all profiles")
         hts_tui_clear
-        local out profile secrets=0
+        local out profile secrets=0 with_bh=0
         profile="$(hts_active_profile 2>/dev/null || print default)"
         [[ "$action" == "Export all profiles" ]] && profile=all
         out="$(hts_gum_input --value "$(hts_transfer_default_out)" --placeholder "output directory")" || continue
@@ -765,8 +765,11 @@ hts_tui_transfer() {
         if hts_gum confirm "Include API keys in the bundle? (usually no)"; then
           secrets=1
         fi
+        if hts_gum confirm --default=false "Include recent branch history?"; then
+          with_bh=1
+        fi
         hts_tui_clear
-        if hts_export_bundle "$out" "$profile" "$secrets" 1; then
+        if hts_export_bundle "$out" "$profile" "$secrets" 1 "$with_bh"; then
           hts_gum_box "Exported → $out"
         else
           hts_gum_box_error "Export failed"
@@ -775,15 +778,18 @@ hts_tui_transfer() {
         ;;
       "Import bundle")
         hts_tui_clear
-        local src as_profile="" force=0
+        local src as_profile="" force=0 with_bh=0
         src="$(hts_gum_input --placeholder "path to export directory")" || continue
         [[ -n "$src" ]] || continue
         as_profile="$(hts_gum_input --placeholder "remap to profile (blank=keep names)")" || continue
         if hts_gum confirm "Overwrite existing matrix files?"; then
           force=1
         fi
+        if hts_gum confirm --default=false "Import recent branch history from the bundle?"; then
+          with_bh=1
+        fi
         hts_tui_clear
-        if hts_import_bundle "$src" "$as_profile" "$force" 0 1; then
+        if hts_import_bundle "$src" "$as_profile" "$force" 0 1 "$with_bh"; then
           hts_gum_box "Import finished"
         else
           hts_gum_box_error "Import failed (or nothing to import)"

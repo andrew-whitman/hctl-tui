@@ -77,7 +77,7 @@ hts doctor
 | `~/.config/hctl/config.json` | Auth (host, account, API key) — owned by **hctl** |
 | `~/.config/hctl-tui/config.yaml` | Active profile pointer + UI defaults |
 | `~/.config/hctl-tui/matrices/<profile>/<module>.yaml` | Test matrices |
-| `~/.config/hctl-tui/branch-history.yaml` | Recently used app/source branches (per pipeline) |
+| `~/.config/hctl-tui/branch-history.yaml` | Recently used app/source branches (per pipeline; local unless exported) |
 
 ### Export / import
 
@@ -86,11 +86,13 @@ Share matrices (and optional hctl profile stubs) between machines:
 ```bash
 hts export --out ./hts-bundle              # active profile; API keys redacted
 hts export --profile all --out ./all       # every profile
+hts export --out ./hts-bundle --with-branch-history   # also copy recent branches
 hts import ./hts-bundle                    # merge; skip existing files
 hts import ./hts-bundle --as other --force # remap + overwrite
+hts import ./hts-bundle --with-branch-history         # merge branch history too
 ```
 
-Bundle layout: `manifest.yaml`, `matrices/<profile>/*.yaml`, `profiles/<name>.json` (no `api_key` unless `--include-secrets`). After import, set the API key with `hts profile init`.
+Bundle layout: `manifest.yaml`, `matrices/<profile>/*.yaml`, `profiles/<name>.json` (no `api_key` unless `--include-secrets`), optional `branch-history.yaml`. After import, set the API key with `hts profile init`.
 
 See [hctl-tui-spec.md](hctl-tui-spec.md) for the full contract.
 

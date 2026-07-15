@@ -793,13 +793,14 @@ hts_branch_history_record() {
   key="$(hts_branch_history_key "$profile" "$module" "$org" "$project" "$pipeline_id")"
   max_n="${HTS_BRANCH_HISTORY_MAX:-10}"
   /bin/mkdir -p "$HTS_CONFIG_DIR" 2>/dev/null || true
-  hts_python - "$HTS_BRANCH_HISTORY_FILE" "$key" "$branch" "$max_n" <<'PY'
+  if ! hts_python - "$HTS_BRANCH_HISTORY_FILE" "$key" "$branch" "$max_n" <<'PY'
 import sys
 path, key, branch, max_n = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 try:
     import yaml
 except ImportError:
-    raise SystemExit(0)
+    print("PyYAML missing", file=sys.stderr)
+    raise SystemExit(1)
 try:
     data = yaml.safe_load(open(path)) or {}
 except FileNotFoundError:
@@ -827,6 +828,28 @@ data[key] = out[:max_n]
 with open(path, "w") as f:
     yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
 PY
+  then
+    hts_err "could not save branch history to $HTS_BRANCH_HISTORY_FILE"
+    return 1
+  fi
+  return 0
+}
+
+# Print to the real TTY (or stderr). Never stdout — prompts are captured with $(...).
+hts_tty_print() {
+  if { print -n -- "" >/dev/tty; } 2>/dev/null; then
+    print -- "$@" >/dev/tty
+  else
+    print -u2 -- "$@"
+  fi
+}
+
+hts_tty_print_n() {
+  if { print -n -- "" >/dev/tty; } 2>/dev/null; then
+    print -n -- "$@" >/dev/tty
+  else
+    print -nu2 -- "$@"
+  fi
 }
 
 hts_prompt_run_branch() {
@@ -837,7 +860,6 @@ hts_prompt_run_branch() {
   local profile="$1" module="$2" alias="$3" org="$4" project="$5" pipeline_id="$6"
   local -a recents=()
   local line default="" val="" label i
-  local tty_out=/dev/tty
 
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
@@ -848,15 +870,11 @@ hts_prompt_run_branch() {
     default="${recents[1]}"
   fi
 
-  if [[ ! -w "$tty_out" ]]; then
-    tty_out=/dev/stdout
-  fi
-
   if (( ${#recents[@]} )); then
-    print -- "Recent branches for ${alias}:" >"$tty_out"
+    hts_tty_print "Recent branches for ${alias}:"
     i=1
     for line in "${recents[@]}"; do
-      print -- "  ${i}) ${line}" >"$tty_out"
+      hts_tty_print "  ${i}) ${line}"
       i=$((i + 1))
     done
   fi
@@ -867,7 +885,7 @@ hts_prompt_run_branch() {
   fi
 
   while true; do
-    print -n -- "${label}: " >"$tty_out"
+    hts_tty_print_n "${label}: "
     if ! IFS= read -r val </dev/tty 2>/dev/null; then
       # no tty — caller should have required --branch
       print -- "$default"
@@ -888,9 +906,9 @@ hts_prompt_run_branch() {
       return 0
     fi
     if (( ${#recents[@]} )); then
-      print -- "(required — type a branch, pick 1..${#recents[@]}, or Enter for default)" >"$tty_out"
+      hts_tty_print "(required — type a branch, pick 1..${#recents[@]}, or Enter for default)"
     else
-      print -- "(required — app/source repo under test, not pipeline template)" >"$tty_out"
+      hts_tty_print "(required — app/source repo under test, not pipeline template)"
     fi
   done
 }
@@ -1040,6 +1058,11 @@ for e in json.load(sys.stdin):
           results+=("${alias}"$'\t'"ERROR"$'\t'"")
         fi
         continue
+      fi
+      # Record when the branch is chosen for a real run (not only on Harness SUCCESS).
+      # Dry-runs do not update history.
+      if [[ "$dry_run" != "1" ]]; then
+        hts_branch_history_record "$profile" "$module" "$org" "$project" "$pid" "$branch" || true
       fi
     fi
     planned+=("${alias}"$'\t'"${etype}"$'\t'"${trigger}"$'\t'"${org}"$'\t'"${project}"$'\t'"${pid}"$'\t'"${repo}"$'\t'"${connector}"$'\t'"${input_set}"$'\t'"${branch}")
