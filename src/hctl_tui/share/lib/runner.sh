@@ -760,9 +760,10 @@ hts_fire_entry() {
 hts_prompt_run_branch() {
   # Prompt for the application source branch (not the pipeline-template branch).
   # usage: hts_prompt_run_branch alias org project pipeline_id [default]
-  local alias="$1" org="$2" project="$3" pipeline_id="$4" default="${5:-}"
+  # org/project/pipeline_id kept for call-site compatibility; prompt shows alias only.
+  local alias="$1" _org="$2" _project="$3" _pipeline_id="$4" default="${5:-}"
   local val="" label
-  label="App/source branch for ${alias} (${org}/${project}/${pipeline_id})"
+  label="App/source branch for ${alias}"
   if [[ -n "$default" ]]; then
     label="${label} [${default}]"
   fi
