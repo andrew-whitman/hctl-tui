@@ -18,6 +18,8 @@ hctl-tui does **not** mutate templates, commit, or push.
 - Tech / set / alias filters to run subsets of the matrix
 - Dry-run mode (preview resolved targets without POSTing)
 - Optional browser open of execution `uiUrl`s after a successful trigger
+- Optional **watch** after run: poll Harness until executions reach a terminal status
+- Optional **log fetch** into `./hts-logs/<alias>/<planExecutionId>/` (zip + extracted NDJSON)
 
 ## Dependencies
 
@@ -105,6 +107,7 @@ Interactive branch prompts are single-line TTY reads (answers stay in scrollback
 Flat home menu (active hctl profile used by default — no per-action picker):
 
 - Run test suite → module (skipped if one) → Run all / Dry-run all / **Select pipelines** (checklist) / Filter then run
+  - After a real (non-dry-run) suite with at least one `planExecutionId`: prompt **Watch executions?** then **Fetch logs?**
 - Add pipeline → module (pick existing or New module…) → alias, org, project, pipeline id, trigger id, set
 - List pipelines / Remove pipeline (alias chooser)
 - Export / Import → share matrices + redacted profile stubs across machines
@@ -122,6 +125,11 @@ hts
 
 # Run matrix
 hts run --module ci [--tech java] [--set shared] [--alias a1,a2] [--dry-run] [--profile NAME] [--no-open]
+hts run --module ci --watch [--fetch-logs] [--watch-interval 10] [--watch-timeout 3600]
+
+# Download logs for one execution (PWD-relative ./hts-logs/ by default)
+hts logs --execution-id ID --pipeline-org ORG --pipeline-project PROJ --pipeline-id ID \
+  [--alias NAME] [--profile NAME] [--out DIR] [--force]
 
 # Profiles (thin wrappers)
 hts profile list
@@ -166,9 +174,10 @@ branch-history.yaml           # optional recent branches (--with-branch-history)
      2. Prefer inline `inputYaml` (replace `<+trigger.*>` with the run-time branch / repo / connector; convert PR build → branch); else fall back to `inputSetRefs` → `--input-set-identifiers` (matrix `input_set:` can override)
      3. Prompt for a git branch per github entry (single-line TTY with optional numbered recent list, or `hts run --branch` for all); then `hctl pipeline-execute post-pipeline-execute-with-input-set-yaml` with `--body @file` and/or `--input-set-identifiers`, plus `--branch`, optional `--repo-identifier` / `connectorRef`. Record the branch in local history on SUCCESS.
    - `type: custom` → `POST /gateway/pipeline/api/webhook/custom/v2` with triggerIdentifier
-4. Collect success/fail; print a summary table.
+4. Collect success/fail; print a summary table. For each successful fire, retain `planExecutionId` (when present) for optional watch/logs.
 5. If `open_urls` / not `--no-open`, open returned `uiUrl`s (macOS `open`, Linux `xdg-open`).
-6. `--dry-run`: preflight each entry (auth, fetch trigger, resolve inputs) without POSTing; print one `SUCCESS` / `FAIL` line per alias.
+6. If `--watch`: poll `get-execution-detail-v2` for each captured execution until terminal status (or `--watch-timeout`). With `--fetch-logs`, download full-pipeline logs via Log Service `blob/download` into `./hts-logs/<alias>/<planExecutionId>/` (`meta.json`, `logs.zip`, `extracted/`). Override root with `HTS_LOGS_DIR` or `hts logs --out`.
+7. `--dry-run`: preflight each entry (auth, fetch trigger, resolve inputs) without POSTing; print one `SUCCESS` / `FAIL` line per alias; no watch/logs.
 
 ## Design principles
 

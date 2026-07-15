@@ -88,6 +88,30 @@ print(msg or "")
 ' 2>/dev/null || true
 }
 
+hts_trigger_execution_id() {
+  # Parse planExecutionId from execute / webhook JSON on stdin.
+  hts_python -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+except Exception:
+    print("")
+    raise SystemExit(0)
+data = d.get("data") if isinstance(d.get("data"), dict) else {}
+pe = data.get("planExecution") if isinstance(data.get("planExecution"), dict) else {}
+ex_id = (
+    pe.get("uuid")
+    or data.get("planExecutionId")
+    or data.get("executionId")
+    or d.get("planExecutionId")
+    or d.get("executionId")
+    or ""
+)
+print(ex_id or "")
+' 2>/dev/null || true
+}
+
 hts_trigger_ui_url() {
   # Args (optional): host account org project pipeline
   local host="${1:-}" account="${2:-}" org="${3:-}" project="${4:-}" pipeline="${5:-}"
@@ -917,13 +941,22 @@ hts_prompt_run_branch() {
   done
 }
 
+# Last non-dry-run batch for watch/logs (TSV):
+# alias \t org \t project \t pipeline \t planExecutionId \t uiUrl \t triggerStatus
+typeset -ga HTS_LAST_RUN_BATCH=()
+
 hts_run_matrix() {
-  # usage: hts_run_matrix profile module tech set aliases dry_run open_urls [cli_branch]
+  # usage: hts_run_matrix profile module tech set aliases dry_run open_urls \
+  #          [cli_branch] [watch] [fetch_logs] [watch_interval] [watch_timeout]
   # cli_branch: optional same branch for every github entry (hts run --branch).
   # Otherwise prompts per github pipeline when a TTY is available.
+  # watch/fetch_logs: 0|1 — after fire, poll executions and optionally download logs.
   local profile="$1" module="$2" tech="${3:-}" set_="${4:-}" aliases="${5:-}" dry_run="${6:-0}" open_urls="${7:-0}"
   local cli_branch="${8:-}"
+  local watch="${9:-0}" fetch_logs="${10:-0}"
+  local watch_interval="${11:-10}" watch_timeout="${12:-3600}"
   cli_branch="$(hts_trim "$cli_branch")"
+  HTS_LAST_RUN_BATCH=()
 
   if ! hts_hctl_profile_exists "$profile"; then
     hts_die "hctl profile not found: $profile"
@@ -999,7 +1032,7 @@ print(0)
   local results=()
   local targets=()
   local alias trigger org project pid etype repo connector input_set branch
-  local resp ui_url trig_status trig_msg fire_ec line
+  local resp ui_url exec_id trig_status trig_msg fire_ec line
   local errfile reason
 
   # Materialize target rows first (no network yet).
@@ -1053,6 +1086,7 @@ for e in json.load(sys.stdin):
             print -- "FAIL     $alias  (no branch)"
           else
             results+=("${alias}"$'\t'"ERROR"$'\t'"")
+            HTS_LAST_RUN_BATCH+=("${alias}"$'\t'"${org}"$'\t'"${project}"$'\t'"${pid}"$'\t'$'\t'$'\t'"ERROR")
           fi
           continue
         }
@@ -1065,6 +1099,7 @@ for e in json.load(sys.stdin):
           print -- "FAIL     $alias  (no branch)"
         else
           results+=("${alias}"$'\t'"ERROR"$'\t'"")
+          HTS_LAST_RUN_BATCH+=("${alias}"$'\t'"${org}"$'\t'"${project}"$'\t'"${pid}"$'\t'$'\t'$'\t'"ERROR")
         fi
         continue
       fi
@@ -1127,6 +1162,7 @@ for e in json.load(sys.stdin):
     hts_log "→ $alias  type=$etype  org=$org project=$project pipeline=$pid branch=${branch:-(-)} trigger=${trigger:-(-)} repo=${repo:-(-)}"
     fire_ec=0
     resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "0" "$branch" "$repo" "$connector" "$input_set" "$alias")" || fire_ec=$?
+    exec_id=""
     if (( fire_ec != 0 )); then
       trig_status="ERROR"
       ui_url=""
@@ -1136,6 +1172,7 @@ for e in json.load(sys.stdin):
       trig_status="$(print -- "$resp" | hts_trigger_status)"
       trig_msg="$(print -- "$resp" | hts_trigger_message)"
       ui_url="$(print -- "$resp" | hts_trigger_ui_url "$host" "$account" "$org" "$project" "$pid")"
+      exec_id="$(print -- "$resp" | hts_trigger_execution_id)"
       if [[ "$trig_status" == "SUCCESS" ]]; then
         ok=$((ok + 1))
         if [[ "$etype" != "custom" && -n "$branch" ]]; then
@@ -1143,6 +1180,9 @@ for e in json.load(sys.stdin):
         fi
         if [[ "$open_urls" == "1" && -n "$ui_url" ]]; then
           hts_open_url "$ui_url"
+        fi
+        if [[ -z "$exec_id" ]]; then
+          hts_log "warn: $alias triggered OK but no planExecutionId in response — cannot watch/fetch logs"
         fi
       else
         fail=$((fail + 1))
@@ -1154,6 +1194,7 @@ for e in json.load(sys.stdin):
       fi
     fi
     results+=("${alias}"$'\t'"${trig_status}"$'\t'"${ui_url:-}")
+    HTS_LAST_RUN_BATCH+=("${alias}"$'\t'"${org}"$'\t'"${project}"$'\t'"${pid}"$'\t'"${exec_id}"$'\t'"${ui_url}"$'\t'"${trig_status}")
   done
 
   fail=$((fail + skipped))
@@ -1171,7 +1212,18 @@ for e in json.load(sys.stdin):
   fi
   print -- ""
   hts_log "done: ok=$ok fail=$fail"
-  (( fail == 0 ))
+
+  local watch_ec=0 fetch_ec=0
+  if [[ "$watch" == "1" ]]; then
+    hts_watch_last_batch "$profile" "$watch_interval" "$watch_timeout" || watch_ec=$?
+    if [[ "$fetch_logs" == "1" ]]; then
+      hts_fetch_last_batch_logs "$profile" || fetch_ec=$?
+    fi
+  elif [[ "$fetch_logs" == "1" ]]; then
+    hts_log "warn: --fetch-logs requires --watch (skipped)"
+  fi
+
+  (( fail == 0 && watch_ec == 0 && fetch_ec == 0 ))
 }
 
 hts_preview_matrix() {

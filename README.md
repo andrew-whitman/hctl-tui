@@ -55,7 +55,12 @@ hts run --module ci --dry-run
 hts run --module ci --tech java --set shared
 hts run --module ci --branch main
 hts run --module ci --alias a1,a2          # specific pipelines (CLI)
+hts run --module ci --watch --fetch-logs   # poll until done, then download logs
 # TUI: Run test suite → Select pipelines (space to toggle checklist)
+#      After a real run: Watch executions? → Fetch logs?
+hts logs --execution-id ID \
+  --pipeline-org ORG --pipeline-project PROJ --pipeline-id PIPE \
+  --alias my-alias                         # → ./hts-logs/my-alias/ID/
 hts matrix list --module ci
 hts matrix add --module ci \
   --type github --alias my-alias --trigger YOUR_TRIGGER_ID \
@@ -95,6 +100,19 @@ hts import ./hts-bundle --with-branch-history         # merge branch history too
 Bundle layout: `manifest.yaml`, `matrices/<profile>/*.yaml`, `profiles/<name>.json` (no `api_key` unless `--include-secrets`), optional `branch-history.yaml`. After import, set the API key with `hts profile init`.
 
 See [hctl-tui-spec.md](hctl-tui-spec.md) for the full contract.
+
+### Watch + logs
+
+After firing a matrix, `hts run --watch` polls Harness until each captured execution is terminal (or `--watch-timeout` seconds). Add `--fetch-logs` to download full-pipeline console logs into:
+
+```text
+./hts-logs/<alias>/<planExecutionId>/
+  meta.json
+  logs.zip
+  extracted/     # when unzip is available
+```
+
+Override the root with `HTS_LOGS_DIR` or `hts logs --out DIR`. Fetch a single execution anytime with `hts logs --execution-id …`. Logs from still-running executions are refused unless `--force` (may be incomplete). Harness limits downloads to 100 log files per request.
 
 ## Dependencies
 

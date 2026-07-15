@@ -472,6 +472,27 @@ hts_tui_run_suite() {
   hts_tui_clear
   hts_run_matrix "$profile" "$module" "$tech" "$set_" "$aliases" "$dry_run" "$open_urls" || true
   hts_tui_aborted && return 0
+
+  if [[ "$dry_run" != "1" ]]; then
+    local watchable=0
+    local line
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && watchable=$((watchable + 1))
+    done < <(hts_watchable_batch_lines)
+
+    if (( watchable > 0 )); then
+      print -- ""
+      if hts_gum confirm --default=true "Watch $watchable execution(s) until done?"; then
+        hts_tui_clear
+        hts_watch_last_batch "$profile" 10 3600 || true
+        print -- ""
+        if hts_gum confirm --default=true "Fetch logs into ./hts-logs/?"; then
+          hts_fetch_last_batch_logs "$profile" || true
+        fi
+      fi
+    fi
+  fi
+
   hts_tui_pause "Enter — back to menu" || true
 }
 

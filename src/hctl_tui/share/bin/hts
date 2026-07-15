@@ -30,6 +30,7 @@ source "$HTS_LIB/deps.sh"
 source "$HTS_LIB/profiles.sh"
 source "$HTS_LIB/pipelines.sh"
 source "$HTS_LIB/runner.sh"
+source "$HTS_LIB/monitor.sh"
 source "$HTS_LIB/transfer.sh"
 source "$HTS_LIB/tui.sh"
 
@@ -50,6 +51,8 @@ Usage:
       Show local config / install peer tools
   hts run [options]
       Fire or dry-run a matrix
+  hts logs [options]
+      Download pipeline console logs for one execution into ./hts-logs/
   hts profile list|use NAME|init [NAME]
   hts matrix list|add|edit|remove [options]
   hts export [--out DIR] [--profile NAME|all] [--include-secrets] [--no-config]
@@ -73,6 +76,21 @@ Run options:
   --dry-run         Preview without POSTing
   --no-open         Do not open uiUrls
   --open            Open uiUrls anyway
+  --watch           After fire, poll executions until terminal (or timeout)
+  --fetch-logs      With --watch: download logs into ./hts-logs/ when done
+  --watch-interval SEC   Poll interval (default: 10)
+  --watch-timeout SEC    Max watch time (default: 3600)
+
+Logs options:
+  --execution-id ID          Plan execution id (required)
+  --alias NAME               Folder name under ./hts-logs/ (default: pipeline)
+  --pipeline-org ORG         Required
+  --pipeline-project NAME    Required
+  --pipeline-id ID           Required
+  --profile NAME             hctl profile
+  --out DIR                  Log root (default: ./hts-logs or HTS_LOGS_DIR)
+  --force                    Allow fetch while execution is still running
+
 
 Matrix options (list/add/edit/remove):
   --module NAME
@@ -174,6 +192,7 @@ EOF
 hts_cmd_run() {
   local profile="" module="" tech="" set_="" aliases="" branch=""
   local dry_run=0 open_urls=-1
+  local watch=0 fetch_logs=0 watch_interval=10 watch_timeout=3600
 
   while (( $# )); do
     case "$1" in
@@ -186,6 +205,10 @@ hts_cmd_run() {
       --dry-run) dry_run=1; shift ;;
       --no-open) open_urls=0; shift ;;
       --open)    open_urls=1; shift ;;
+      --watch)   watch=1; shift ;;
+      --fetch-logs) fetch_logs=1; shift ;;
+      --watch-interval) watch_interval="$2"; shift 2 ;;
+      --watch-timeout) watch_timeout="$2"; shift 2 ;;
       -h|--help) hts_usage; return 0 ;;
       *) hts_die "unknown option: $1"; return 1 ;;
     esac
@@ -202,13 +225,50 @@ hts_cmd_run() {
   fi
   if (( dry_run )); then
     open_urls=0
+    watch=0
+    fetch_logs=0
   fi
 
   if (( ! dry_run )); then
     hts_require_deps run || return 1
   fi
 
-  hts_run_matrix "$profile" "$module" "$tech" "$set_" "$aliases" "$dry_run" "$open_urls" "$branch"
+  hts_run_matrix "$profile" "$module" "$tech" "$set_" "$aliases" "$dry_run" "$open_urls" \
+    "$branch" "$watch" "$fetch_logs" "$watch_interval" "$watch_timeout"
+}
+
+hts_cmd_logs() {
+  local profile="" alias="pipeline" org="" project="" pipeline_id="" exec_id=""
+  local out_dir="" force=0
+
+  while (( $# )); do
+    case "$1" in
+      --profile) profile="$2"; shift 2 ;;
+      --alias) alias="$2"; shift 2 ;;
+      --pipeline-org) org="$2"; shift 2 ;;
+      --pipeline-project) project="$2"; shift 2 ;;
+      --pipeline-id) pipeline_id="$2"; shift 2 ;;
+      --execution-id|--plan-execution-id) exec_id="$2"; shift 2 ;;
+      --out) out_dir="$2"; shift 2 ;;
+      --force) force=1; shift ;;
+      -h|--help)
+        print -- "usage: hts logs --execution-id ID --pipeline-org ORG --pipeline-project PROJ --pipeline-id ID"
+        print -- "              [--alias NAME] [--profile NAME] [--out DIR] [--force]"
+        print -- "  Downloads pipeline console logs into ./hts-logs/<alias>/<execution-id>/."
+        print -- "  Writes meta.json, logs.zip, and extracted/ (when unzip is available)."
+        return 0
+        ;;
+      *) hts_die "unknown option: $1 (try: hts logs --help)"; return 1 ;;
+    esac
+  done
+
+  [[ -n "$exec_id" && -n "$org" && -n "$project" && -n "$pipeline_id" ]] \
+    || { hts_die "hts logs requires --execution-id --pipeline-org --pipeline-project --pipeline-id"; return 1; }
+
+  hts_require_deps run || return 1
+  hts_ensure_config
+  profile="$(hts_resolve_profile "$profile")"
+  hts_fetch_execution_logs "$profile" "$alias" "$org" "$project" "$pipeline_id" "$exec_id" "$out_dir" "$force"
 }
 
 hts_cmd_profile() {
@@ -464,6 +524,7 @@ main() {
   case "$cmd" in
     init)    hts_cmd_init "$@" ;;
     run)     hts_cmd_run "$@" ;;
+    logs)    hts_cmd_logs "$@" ;;
     profile) hts_cmd_profile "$@" ;;
     matrix)  hts_cmd_matrix "$@" ;;
     doctor)  hts_cmd_doctor "$@" ;;
