@@ -12,33 +12,26 @@ PYPROJECT = ROOT / "pyproject.toml"
 INIT = ROOT / "src" / "hctl_tui" / "__init__.py"
 
 
-def _version_from_pyproject(text: str) -> str:
-    match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
-    if not match:
-        raise SystemExit(f"error: no [project] version = \"...\" in {PYPROJECT}")
-    return match.group(1)
-
-
-def _version_from_init(text: str) -> str:
-    match = re.search(r'(?m)^__version__\s*=\s*"([^"]+)"', text)
-    if not match:
-        raise SystemExit(f'error: no __version__ = "..." in {INIT}')
-    return match.group(1)
-
-
 def main() -> int:
-    py_ver = _version_from_pyproject(PYPROJECT.read_text(encoding="utf-8"))
-    init_ver = _version_from_init(INIT.read_text(encoding="utf-8"))
-    if py_ver != init_ver:
+    py_text = PYPROJECT.read_text(encoding="utf-8")
+    init_text = INIT.read_text(encoding="utf-8")
+    py_m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', py_text)
+    init_m = re.search(r'(?m)^__version__\s*=\s*"([^"]+)"', init_text)
+    if not py_m:
+        print(f"error: no version in {PYPROJECT}", file=sys.stderr)
+        return 1
+    if not init_m:
+        print(f"error: no __version__ in {INIT}", file=sys.stderr)
+        return 1
+    if py_m.group(1) != init_m.group(1):
         print(
             "error: package versions are out of sync\n"
-            f"  pyproject.toml:           {py_ver}\n"
-            f"  src/hctl_tui/__init__.py: {init_ver}\n"
-            "Keep both identical (see .cursor/rules/semver-on-main.mdc).",
+            f"  pyproject.toml:           {py_m.group(1)}\n"
+            f"  src/hctl_tui/__init__.py: {init_m.group(1)}",
             file=sys.stderr,
         )
         return 1
-    print(f"ok: version {py_ver} is in sync")
+    print(f"ok: version {py_m.group(1)} is in sync")
     return 0
 
 

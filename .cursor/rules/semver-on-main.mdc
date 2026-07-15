@@ -12,7 +12,12 @@ When creating a git commit that will land on `main` (commit on `main`, or on a b
 1. `pyproject.toml` → `[project] version = "X.Y.Z"`
 2. `src/hctl_tui/__init__.py` → `__version__ = "X.Y.Z"`
 
-Never bump one without the other. Sync is enforced by the native git pre-commit hook in `scripts/git-hooks/pre-commit` (runs `scripts/check_version_sync.py`). Install with `./scripts/install-git-hooks.sh`.
+Never bump one without the other. The native git pre-commit hook (`scripts/git-hooks/pre-commit` → `scripts/pre_commit_bump_version.py`) auto-bumps (default **patch**), writes both sources, and stages them. Install with `./scripts/install-git-hooks.sh`.
+
+| Env | Effect |
+|-----|--------|
+| `HCTL_TUI_BUMP=patch\|minor\|major` | Choose bump level (default `patch`) |
+| `HCTL_TUI_NO_BUMP=1` | Skip auto-bump (still requires versions in sync) |
 
 ## Bump rules (semver)
 
