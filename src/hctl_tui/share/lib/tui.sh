@@ -303,7 +303,8 @@ hts_tui_run_suite() {
     [[ -n "$set_" ]] && print -- "set=$set_"
     [[ -n "$aliases" ]] && print -- "alias=$aliases"
     (( dry_run )) && print -- "mode=dry-run"
-    print -- "You will enter a branch for each pipeline first, then triggers start."
+    print -- "You will enter the app/source branch for each pipeline first"
+    print -- "(the repo under test — not the pipeline template branch), then triggers start."
     print -- ""
     hts_preview_matrix "$profile" "$module" "$tech" "$set_" "$aliases"
   } | hts_tui_show
@@ -340,7 +341,8 @@ hts_tui_matrix_add() {
   {
     print -- "Add pipeline"
     print -- "profile=$profile  module=$module"
-    print -- "Branch is chosen when you run the suite (not stored here)."
+    print -- "Branch is chosen when you run the suite (app/source repo branch,"
+    print -- "not the pipeline template branch — not stored here)."
   } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
 
@@ -532,7 +534,8 @@ q("cur_pipeline", p.get("identifier") or "")
   hts_tui_clear
   {
     print -- "Edit pipeline — leave blank to keep current value"
-    print -- "Branch is chosen when you run the suite (not stored here)."
+    print -- "Branch is chosen when you run the suite (app/source repo branch,"
+    print -- "not the pipeline template branch — not stored here)."
     print -- "profile=$profile  module=$module"
     print -- ""
     print -- "Current: $cur_alias"

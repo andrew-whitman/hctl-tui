@@ -758,11 +758,11 @@ hts_fire_entry() {
 }
 
 hts_prompt_run_branch() {
-  # Prompt for a git branch at run time (per pipeline).
+  # Prompt for the application source branch (not the pipeline-template branch).
   # usage: hts_prompt_run_branch alias org project pipeline_id [default]
   local alias="$1" org="$2" project="$3" pipeline_id="$4" default="${5:-}"
   local val="" label
-  label="Branch for ${alias} (${org}/${project}/${pipeline_id})"
+  label="App/source branch for ${alias} (${org}/${project}/${pipeline_id})"
   if [[ -n "$default" ]]; then
     label="${label} [${default}]"
   fi
@@ -782,7 +782,8 @@ hts_prompt_run_branch() {
       print -- "$val"
       return 0
     fi
-    print -- "(required)" >/dev/tty 2>/dev/null || print -- "(required)"
+    print -- "(required — app/source repo under test, not pipeline template)" >/dev/tty 2>/dev/null \
+      || print -- "(required — app/source repo under test, not pipeline template)"
   done
 }
 
@@ -858,7 +859,7 @@ print(0)
 ')"
   fi
   if [[ "$need_branch_prompt" == "1" && "$have_tty" != "1" ]]; then
-    hts_die "branch required for github pipelines — pass: hts run --branch NAME (or run interactively to be prompted per pipeline)"
+    hts_die "app/source branch required for github pipelines — pass: hts run --branch NAME (repo under test, not pipeline template; or run interactively)"
     return 1
   fi
 
@@ -898,7 +899,7 @@ for e in json.load(sys.stdin):
   local -a planned=()
   local skipped=0
   if [[ -z "$cli_branch" && "$need_branch_prompt" == "1" ]]; then
-    hts_log "enter a branch for each pipeline (before triggering)…"
+    hts_log "enter the app/source branch for each pipeline (not the pipeline-template branch)…"
     print -- "" >/dev/tty 2>/dev/null || true
   fi
   for line in "${targets[@]}"; do

@@ -65,7 +65,8 @@ Run options:
   --tech NAME       Filter by tech
   --set NAME        Filter by set
   --alias A,B       Filter by alias
-  --branch NAME     Git branch for all github pipelines
+  --branch NAME     App/source git branch for all github pipelines
+                    (repo under test — not the pipeline template branch)
                     (otherwise prompted per pipeline)
   --dry-run         Preview without POSTing
   --no-open         Do not open uiUrls
@@ -90,6 +91,7 @@ Matrix options (list/add/edit/remove):
 type=github: get-trigger → resolve inputYaml → pipeline execute.
 type=custom: POST Harness custom webhook trigger.
 Branch is not stored on matrix entries — prompted at run (or --branch).
+That branch is the application/source repo under test, not the pipeline template branch.
 Edit (CLI): only flags you pass are changed.
 Edit (TUI): pick a pipeline; blank keeps the current value.
 

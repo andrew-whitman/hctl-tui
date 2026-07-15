@@ -96,7 +96,7 @@ entries: []
 #       identifier: YOUR_PIPELINE_ID
 ```
 
-`type: github` fetches the webhook trigger (`hctl triggers get-trigger`), resolves `inputYaml`, and executes the pipeline. `type: custom` uses `trigger` as `triggerIdentifier` for the custom webhook API. Org/project/pipeline come from the entry; account and API key come from the selected hctl profile. Git branch is chosen when you run (per pipeline prompt, or `hts run --branch`).
+`type: github` fetches the webhook trigger (`hctl triggers get-trigger`), resolves `inputYaml`, and executes the pipeline. `type: custom` uses `trigger` as `triggerIdentifier` for the custom webhook API. Org/project/pipeline come from the entry; account and API key come from the selected hctl profile. At run time you choose the **application/source git branch** (the repo under test) per pipeline — or `hts run --branch` for all. This is not the pipeline-template / Git Experience branch.
 
 ## TUI flow
 
