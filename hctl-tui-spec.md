@@ -98,7 +98,7 @@ entries: []
 
 `type: github` fetches the webhook trigger (`hctl triggers get-trigger`), resolves `inputYaml`, and executes the pipeline. `type: custom` uses `trigger` as `triggerIdentifier` for the custom webhook API. Org/project/pipeline come from the entry; account and API key come from the selected hctl profile. At run time you choose the **application/source git branch** (the repo under test) per pipeline — or `hts run --branch` for all. This is not the pipeline-template / Git Experience branch.
 
-Interactive branch prompts offer **recently used branches** for that pipeline (gum filter + “Enter a different branch…”). History is stored locally in `~/.config/hctl-tui/branch-history.yaml`, keyed by profile/module/org/project/pipeline id (not matrix alias), and updated after a successful execute. It is not part of the matrix file and is not exported.
+Interactive branch prompts are single-line TTY reads (answers stay in scrollback). When history exists for that pipeline, a numbered recent list is printed above the prompt; Enter accepts the default (most recent), or type a number / any branch name. History lives in `~/.config/hctl-tui/branch-history.yaml`, keyed by profile/module/org/project/pipeline id (not matrix alias), and is updated after a successful execute. It is not part of the matrix file and is not exported.
 
 ## TUI flow
 
@@ -160,7 +160,7 @@ hctl-tui-config.yaml          # optional local defaults (omit with --no-config)
    - `type: github` (default):
      1. `hctl triggers get-trigger` (org/project/`--target-identifier` pipeline + `--trigger-identifier`)
      2. Prefer inline `inputYaml` (replace `<+trigger.*>` with the run-time branch / repo / connector; convert PR build → branch); else fall back to `inputSetRefs` → `--input-set-identifiers` (matrix `input_set:` can override)
-     3. Prompt for a git branch per github entry (recent local history via gum filter when available, or `hts run --branch` for all); then `hctl pipeline-execute post-pipeline-execute-with-input-set-yaml` with `--body @file` and/or `--input-set-identifiers`, plus `--branch`, optional `--repo-identifier` / `connectorRef`. Record the branch in local history on SUCCESS.
+     3. Prompt for a git branch per github entry (single-line TTY with optional numbered recent list, or `hts run --branch` for all); then `hctl pipeline-execute post-pipeline-execute-with-input-set-yaml` with `--body @file` and/or `--input-set-identifiers`, plus `--branch`, optional `--repo-identifier` / `connectorRef`. Record the branch in local history on SUCCESS.
    - `type: custom` → `POST /gateway/pipeline/api/webhook/custom/v2` with triggerIdentifier
 4. Collect success/fail; print a summary table.
 5. If `open_urls` / not `--no-open`, open returned `uiUrl`s (macOS `open`, Linux `xdg-open`).

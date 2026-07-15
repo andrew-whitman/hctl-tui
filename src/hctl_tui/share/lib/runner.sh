@@ -740,9 +740,6 @@ hts_fire_entry() {
   esac
 }
 
-# Sentinel shown in the gum recent-branch picker (not a real git branch).
-HTS_BRANCH_OTHER_LABEL="Enter a different branch…"
-
 hts_branch_history_key() {
   # Stable identity (survives alias renames): profile::module::org::project::pipeline_id
   # usage: hts_branch_history_key profile module org project pipeline_id
@@ -832,34 +829,45 @@ with open(path, "w") as f:
 PY
 }
 
-hts_prompt_run_branch_text() {
-  # Free-text branch prompt (gum input when available, else readline).
-  # usage: hts_prompt_run_branch_text alias [default]
-  local alias="$1" default="${2:-}" val="" label
-  label="App/source branch for ${alias}"
-  if hts_have gum; then
-    local -a gargs=(--header "$label" --placeholder "app/source repo under test (not pipeline template)")
-    [[ -n "$default" ]] && gargs+=(--value "$default")
-    while true; do
-      val="$(hts_gum_input "${gargs[@]}")" || return 1
-      val="$(hts_trim "$val")"
-      if [[ -z "$val" && -n "$default" ]]; then
-        print -- "$default"
-        return 0
-      fi
-      if [[ -n "$val" ]]; then
-        print -- "$val"
-        return 0
-      fi
-      print -- "(required — app/source repo under test, not pipeline template)" >/dev/tty 2>/dev/null \
-        || print -- "(required — app/source repo under test, not pipeline template)"
+hts_prompt_run_branch() {
+  # Single-line TTY prompt (stays in scrollback as you walk the suite).
+  # Shows numbered recent branches when available; Enter accepts the default.
+  # Type a number (1..N) to pick a recent, or type any branch name.
+  # usage: hts_prompt_run_branch profile module alias org project pipeline_id
+  local profile="$1" module="$2" alias="$3" org="$4" project="$5" pipeline_id="$6"
+  local -a recents=()
+  local line default="" val="" label i
+  local tty_out=/dev/tty
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    recents+=("$line")
+  done < <(hts_branch_history_list "$profile" "$module" "$org" "$project" "$pipeline_id")
+
+  if (( ${#recents[@]} )); then
+    default="${recents[1]}"
+  fi
+
+  if [[ ! -w "$tty_out" ]]; then
+    tty_out=/dev/stdout
+  fi
+
+  if (( ${#recents[@]} )); then
+    print -- "Recent branches for ${alias}:" >"$tty_out"
+    i=1
+    for line in "${recents[@]}"; do
+      print -- "  ${i}) ${line}" >"$tty_out"
+      i=$((i + 1))
     done
   fi
+
+  label="App/source branch for ${alias}"
   if [[ -n "$default" ]]; then
     label="${label} [${default}]"
   fi
+
   while true; do
-    print -n -- "${label}: " >/dev/tty 2>/dev/null || print -n -- "${label}: "
+    print -n -- "${label}: " >"$tty_out"
     if ! IFS= read -r val </dev/tty 2>/dev/null; then
       # no tty — caller should have required --branch
       print -- "$default"
@@ -871,57 +879,20 @@ hts_prompt_run_branch_text() {
       return 0
     fi
     if [[ -n "$val" ]]; then
+      # Numeric shortcut into the numbered recent list
+      if [[ "$val" == <-> ]] && (( val >= 1 && val <= ${#recents[@]} )); then
+        print -- "${recents[val]}"
+        return 0
+      fi
       print -- "$val"
       return 0
     fi
-    print -- "(required — app/source repo under test, not pipeline template)" >/dev/tty 2>/dev/null \
-      || print -- "(required — app/source repo under test, not pipeline template)"
+    if (( ${#recents[@]} )); then
+      print -- "(required — type a branch, pick 1..${#recents[@]}, or Enter for default)" >"$tty_out"
+    else
+      print -- "(required — app/source repo under test, not pipeline template)" >"$tty_out"
+    fi
   done
-}
-
-hts_prompt_run_branch() {
-  # Prompt for the application source branch (not the pipeline-template branch).
-  # Uses local recent-branch history + gum filter when available.
-  # usage: hts_prompt_run_branch profile module alias org project pipeline_id
-  local profile="$1" module="$2" alias="$3" org="$4" project="$5" pipeline_id="$6"
-  local -a recents=()
-  local line choice default=""
-
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    recents+=("$line")
-  done < <(hts_branch_history_list "$profile" "$module" "$org" "$project" "$pipeline_id")
-
-  if (( ${#recents[@]} )); then
-    default="${recents[1]}"
-  fi
-
-  if (( ${#recents[@]} )) && hts_have gum; then
-    local -a opts=("${recents[@]}" "$HTS_BRANCH_OTHER_LABEL")
-    local height
-    height=$(( ${#opts[@]} + 2 ))
-    if (( height < 5 )); then height=5; fi
-    if (( height > 15 )); then height=15; fi
-    choice="$(
-      hts_gum_filter \
-        --header "App/source branch for ${alias}" \
-        --placeholder "Filter recent branches…" \
-        --height "$height" \
-        -- "${opts[@]}"
-    )" || return 1
-    choice="$(hts_trim "$choice")"
-    if [[ -z "$choice" ]]; then
-      return 1
-    fi
-    if [[ "$choice" == "$HTS_BRANCH_OTHER_LABEL" ]]; then
-      hts_prompt_run_branch_text "$alias" ""
-      return $?
-    fi
-    print -- "$choice"
-    return 0
-  fi
-
-  hts_prompt_run_branch_text "$alias" "$default"
 }
 
 hts_run_matrix() {
