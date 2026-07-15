@@ -70,12 +70,11 @@ PY
 
 hts_matrix_add() {
   # optional 10th arg: type (github|custom), default github
-  # optional 11th arg: branch (for git-backed pipelines)
-  # optional 12th/13th: repo, connector overrides
+  # optional 11th/12th: repo, connector overrides (branch is NOT stored — prompted at run)
   local profile="$1" module="$2"
   local alias="$3" trigger="$4" tech="$5" set_="$6"
   local org="$7" project="$8" identifier="$9"
-  local etype="${10:-github}" branch="${11:-}" repo="${12:-}" connector="${13:-}"
+  local etype="${10:-github}" repo="${11:-}" connector="${12:-}"
   local path
   path="$(hts_matrix_ensure "$profile" "$module")"
   HTS_MX_PATH="$path" \
@@ -87,7 +86,6 @@ hts_matrix_add() {
   HTS_MX_PROJECT="$project" \
   HTS_MX_IDENTIFIER="$identifier" \
   HTS_MX_TYPE="$etype" \
-  HTS_MX_BRANCH="$branch" \
   HTS_MX_REPO="$repo" \
   HTS_MX_CONNECTOR="$connector" \
   hts_python <<'PY'
@@ -107,7 +105,6 @@ org = os.environ.get("HTS_MX_ORG") or ""
 project = os.environ.get("HTS_MX_PROJECT") or ""
 identifier = os.environ.get("HTS_MX_IDENTIFIER") or ""
 etype = (os.environ.get("HTS_MX_TYPE") or "github").strip().lower()
-branch = os.environ.get("HTS_MX_BRANCH") or ""
 repo = os.environ.get("HTS_MX_REPO") or ""
 connector = os.environ.get("HTS_MX_CONNECTOR") or ""
 
@@ -132,12 +129,11 @@ entry = {
 }
 if trigger:
     entry["trigger"] = trigger
-if branch:
-    entry["branch"] = branch
 if repo:
     entry["repo"] = repo
 if connector:
     entry["connector"] = connector
+# branch is runtime-only — never persist
 entries.append(entry)
 data["module"] = data.get("module") or "ci"
 data["entries"] = entries
@@ -162,7 +158,8 @@ PY
 
 hts_matrix_update() {
   # Full replace of an existing entry (TUI edit). Fails if alias missing.
-  # Args: profile module alias new_alias trigger tech set org project id type branch repo connector
+  # Args: profile module alias new_alias trigger tech set org project id type repo connector
+  # Branch is never stored (prompted at run time); legacy branch keys are stripped.
   local profile="$1" module="$2" alias="$3"
   local path
   path="$(hts_matrix_path "$profile" "$module")"
@@ -177,9 +174,8 @@ hts_matrix_update() {
   HTS_MX_PROJECT="${9:-}" \
   HTS_MX_IDENTIFIER="${10:-}" \
   HTS_MX_TYPE="${11:-github}" \
-  HTS_MX_BRANCH="${12:-}" \
-  HTS_MX_REPO="${13:-}" \
-  HTS_MX_CONNECTOR="${14:-}" \
+  HTS_MX_REPO="${12:-}" \
+  HTS_MX_CONNECTOR="${13:-}" \
   hts_python <<'PY'
 import os, sys
 try:
@@ -220,13 +216,10 @@ entry = {
     },
 }
 trigger = os.environ.get("HTS_MX_TRIGGER") or ""
-branch = os.environ.get("HTS_MX_BRANCH") or ""
 repo = os.environ.get("HTS_MX_REPO") or ""
 connector = os.environ.get("HTS_MX_CONNECTOR") or ""
 if trigger:
     entry["trigger"] = trigger
-if branch:
-    entry["branch"] = branch
 if repo:
     entry["repo"] = repo
 if connector:
@@ -303,12 +296,6 @@ if patching("TRIGGER"):
         entry["trigger"] = v
     else:
         entry.pop("trigger", None)
-if patching("BRANCH"):
-    v = os.environ.get("HTS_MX_BRANCH") or ""
-    if v:
-        entry["branch"] = v
-    else:
-        entry.pop("branch", None)
 if patching("REPO"):
     v = os.environ.get("HTS_MX_REPO") or ""
     if v:
@@ -321,6 +308,9 @@ if patching("CONNECTOR"):
         entry["connector"] = v
     else:
         entry.pop("connector", None)
+
+# Branch is runtime-only — always strip legacy persisted branch keys
+entry.pop("branch", None)
 
 entry["pipeline"] = pipe
 entries[idx] = entry

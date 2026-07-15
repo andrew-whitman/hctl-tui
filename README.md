@@ -53,12 +53,13 @@ Non-interactive:
 ```bash
 hts run --module ci --dry-run
 hts run --module ci --tech java --set shared
+hts run --module ci --branch main
 hts matrix list --module ci
 hts matrix add --module ci \
-  --type github --alias my-alias --trigger YOUR_TRIGGER_ID --branch main \
+  --type github --alias my-alias --trigger YOUR_TRIGGER_ID \
   --tech java --set shared \
   --pipeline-org YOUR_ORG --pipeline-project YOUR_PROJECT --pipeline-id YOUR_PIPELINE_ID
-hts matrix edit --module ci --alias my-alias --branch develop
+hts matrix edit --module ci --alias my-alias --set shared
 hts matrix remove --module ci --alias my-alias
 hts profile list
 hts profile use default

@@ -9,6 +9,7 @@ __pycache__/
 .Python
 .tmp-config/
 .venv/
+.githooks/
 
 # Never commit Harness/hctl secrets or live matrices
 .env

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Native git pre-commit hook: keep package versions in sync.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+CHECK="$ROOT/scripts/check_version_sync.py"
+
+if [[ ! -f "$CHECK" ]]; then
+  echo "error: missing $CHECK" >&2
+  exit 1
+fi
+
+exec python3 "$CHECK"

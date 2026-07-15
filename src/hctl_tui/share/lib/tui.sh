@@ -270,6 +270,7 @@ hts_tui_run_suite() {
     [[ -n "$set_" ]] && print -- "set=$set_"
     [[ -n "$aliases" ]] && print -- "alias=$aliases"
     (( dry_run )) && print -- "mode=dry-run"
+    print -- "You will be asked for a branch per pipeline."
     print -- ""
     hts_preview_matrix "$profile" "$module" "$tech" "$set_" "$aliases"
   } | hts_tui_show
@@ -299,25 +300,23 @@ hts_tui_matrix_add() {
   fi
   hts_profile_use "$profile" >/dev/null
 
-  local module add_alias add_org add_project add_pipeline add_trigger add_set add_branch
+  local module add_alias add_org add_project add_pipeline add_trigger add_set
   module="$(hts_default_module)"
 
   hts_tui_clear
   {
     print -- "Add pipeline"
     print -- "profile=$profile  module=$module"
-    print -- "Enter one field per line (branch optional)."
+    print -- "Branch is chosen when you run the suite (not stored here)."
   } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
 
-  # Plain /dev/tty reads — gum input under $(...) was shifting field values.
-  add_alias="$(hts_tty_ask "1/7 Alias")" || return 0
-  add_org="$(hts_tty_ask "2/7 Org")" || return 0
-  add_project="$(hts_tty_ask "3/7 Project")" || return 0
-  add_pipeline="$(hts_tty_ask "4/7 Pipeline")" || return 0
-  add_trigger="$(hts_tty_ask "5/7 Trigger (GitHub webhook id)")" || return 0
-  add_branch="$(hts_tty_ask "6/7 Branch (e.g. main; resolves <+trigger.branch>)" 0)" || return 0
-  add_set="$(hts_tty_ask "7/7 Set")" || return 0
+  add_alias="$(hts_tty_ask "1/6 Alias")" || return 0
+  add_org="$(hts_tty_ask "2/6 Org")" || return 0
+  add_project="$(hts_tty_ask "3/6 Project")" || return 0
+  add_pipeline="$(hts_tty_ask "4/6 Pipeline")" || return 0
+  add_trigger="$(hts_tty_ask "5/6 Trigger (GitHub webhook id)")" || return 0
+  add_set="$(hts_tty_ask "6/6 Set")" || return 0
 
   hts_tui_clear
   {
@@ -327,16 +326,14 @@ hts_tui_matrix_add() {
     print -- "  project:  $add_project"
     print -- "  pipeline: $add_pipeline"
     print -- "  trigger:  $add_trigger"
-    print -- "  branch:   ${add_branch:-(none)}"
     print -- "  set:      $add_set"
   } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
   hts_gum confirm "Save this entry?" || return 0
 
   hts_matrix_add "$profile" "$module" "$add_alias" "$add_trigger" "java" "$add_set" \
-    "$add_org" "$add_project" "$add_pipeline" "github" "$add_branch" >/dev/null
+    "$add_org" "$add_project" "$add_pipeline" "github" >/dev/null
 
-  # Show what was actually persisted (catches write/mapping bugs immediately).
   local path saved
   path="$(hts_matrix_path "$profile" "$module")"
   saved="$(
@@ -351,12 +348,11 @@ data = yaml.safe_load(open(path)) or {}
 for e in data.get("entries") or []:
     if (e or {}).get("alias") == alias:
         p = e.get("pipeline") or {}
-        print("org={} project={} pipeline={} trigger={} branch={} set={}".format(
+        print("org={} project={} pipeline={} trigger={} set={}".format(
             p.get("org") or "",
             p.get("project") or "",
             p.get("identifier") or "",
             e.get("trigger") or "",
-            e.get("branch") or "(none)",
             e.get("set") or "",
         ))
         break
@@ -386,9 +382,7 @@ for e in json.load(sys.stdin):
         continue
     p = e.get("pipeline") or {}
     pipe = "{}/{}/{}".format(p.get("org") or "-", p.get("project") or "-", p.get("identifier") or "-")
-    br = e.get("branch") or ""
-    extra = "  branch="+br if br else ""
-    print("{} — {}{}".format(al, pipe, extra))
+    print("{} — {}".format(al, pipe))
 '
   )
   if (( ${#labels[@]} == 0 )); then
@@ -409,9 +403,9 @@ hts_tui_matrix_edit() {
   hts_profile_use "$profile" >/dev/null
 
   local module alias entry
-  local cur_alias cur_org cur_project cur_pipeline cur_trigger cur_set cur_branch cur_tech cur_type
+  local cur_alias cur_org cur_project cur_pipeline cur_trigger cur_set cur_tech cur_type
   local cur_repo cur_connector
-  local new_alias new_org new_project new_pipeline new_trigger new_set new_branch
+  local new_alias new_org new_project new_pipeline new_trigger new_set
 
   hts_tui_clear
   module="$(hts_tui_pick_module "$profile" "Edit · module")" || {
@@ -432,7 +426,6 @@ hts_tui_matrix_edit() {
     return 0
   }
 
-  # Unpack fields
   eval "$(
     print -- "$entry" | hts_python -c '
 import json,sys,shlex
@@ -445,7 +438,6 @@ q("cur_type", e.get("type") or "github")
 q("cur_tech", e.get("tech") or "java")
 q("cur_set", e.get("set") or "")
 q("cur_trigger", e.get("trigger") or "")
-q("cur_branch", e.get("branch") or "")
 q("cur_repo", e.get("repo") or "")
 q("cur_connector", e.get("connector") or "")
 q("cur_org", p.get("org") or "")
@@ -457,22 +449,21 @@ q("cur_pipeline", p.get("identifier") or "")
   hts_tui_clear
   {
     print -- "Edit pipeline — leave blank to keep current value"
-    print -- "Optional: type - on Branch to clear it"
+    print -- "Branch is chosen when you run the suite (not stored here)."
     print -- "profile=$profile  module=$module"
     print -- ""
     print -- "Current: $cur_alias"
     print -- "  $cur_org / $cur_project / $cur_pipeline"
-    print -- "  trigger=${cur_trigger:-(none)}  branch=${cur_branch:-(none)}  set=${cur_set:-(none)}"
+    print -- "  trigger=${cur_trigger:-(none)}  set=${cur_set:-(none)}"
   } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
 
-  new_alias="$(hts_tty_ask_keep "1/7 Alias" "$cur_alias")" || return 0
-  new_org="$(hts_tty_ask_keep "2/7 Org" "$cur_org")" || return 0
-  new_project="$(hts_tty_ask_keep "3/7 Project" "$cur_project")" || return 0
-  new_pipeline="$(hts_tty_ask_keep "4/7 Pipeline" "$cur_pipeline")" || return 0
-  new_trigger="$(hts_tty_ask_keep "5/7 Trigger" "$cur_trigger")" || return 0
-  new_branch="$(hts_tty_ask_keep "6/7 Branch (- to clear)" "$cur_branch" 0)" || return 0
-  new_set="$(hts_tty_ask_keep "7/7 Set" "$cur_set")" || return 0
+  new_alias="$(hts_tty_ask_keep "1/6 Alias" "$cur_alias")" || return 0
+  new_org="$(hts_tty_ask_keep "2/6 Org" "$cur_org")" || return 0
+  new_project="$(hts_tty_ask_keep "3/6 Project" "$cur_project")" || return 0
+  new_pipeline="$(hts_tty_ask_keep "4/6 Pipeline" "$cur_pipeline")" || return 0
+  new_trigger="$(hts_tty_ask_keep "5/6 Trigger" "$cur_trigger")" || return 0
+  new_set="$(hts_tty_ask_keep "6/6 Set" "$cur_set")" || return 0
 
   hts_tui_clear
   {
@@ -482,7 +473,6 @@ q("cur_pipeline", p.get("identifier") or "")
     print -- "  project:  $new_project"
     print -- "  pipeline: $new_pipeline"
     print -- "  trigger:  $new_trigger"
-    print -- "  branch:   ${new_branch:-(none)}"
     print -- "  set:      $new_set"
   } | hts_tui_show
   print -- "" >/dev/tty 2>/dev/null || print -- ""
@@ -490,7 +480,7 @@ q("cur_pipeline", p.get("identifier") or "")
 
   hts_matrix_update "$profile" "$module" "$alias" "$new_alias" "$new_trigger" \
     "${cur_tech:-java}" "$new_set" "$new_org" "$new_project" "$new_pipeline" \
-    "${cur_type:-github}" "$new_branch" "$cur_repo" "$cur_connector" >/dev/null || {
+    "${cur_type:-github}" "$cur_repo" "$cur_connector" >/dev/null || {
     hts_gum_box_error "Update failed"
     hts_tui_pause
     return 0

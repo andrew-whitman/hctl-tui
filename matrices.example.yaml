@@ -13,7 +13,6 @@ entries: []
 #   - alias: my-alias
 #     type: github
 #     trigger: MY_GITHUB_TRIGGER_ID
-#     branch: main
 #     tech: java
 #     set: shared
 #     pipeline:

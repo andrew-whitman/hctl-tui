@@ -87,8 +87,8 @@ entries: []
 #     type: github          # default: pipeline execute
 #     tech: java
 #     set: shared
-#     # trigger: optional — github: webhook trigger id; custom: custom trigger id
-#     # branch: optional — resolves <+trigger.*> / PR→branch for github execute
+#     # trigger: github webhook trigger id (required for github execute)
+#     # branch is prompted at run time (or hts run --branch) — not stored here
 #     # repo / connector: optional overrides for --repo-identifier / connectorRef
 #     pipeline:
 #       org: YOUR_ORG
@@ -96,7 +96,7 @@ entries: []
 #       identifier: YOUR_PIPELINE_ID
 ```
 
-`type: github` fetches the webhook trigger (`hctl triggers get-trigger`), resolves `inputYaml`, and executes the pipeline. `type: custom` uses `trigger` as `triggerIdentifier` for the custom webhook API. Org/project/pipeline come from the entry; account and API key come from the selected hctl profile.
+`type: github` fetches the webhook trigger (`hctl triggers get-trigger`), resolves `inputYaml`, and executes the pipeline. `type: custom` uses `trigger` as `triggerIdentifier` for the custom webhook API. Org/project/pipeline come from the entry; account and API key come from the selected hctl profile. Git branch is chosen when you run (per pipeline prompt, or `hts run --branch`).
 
 ## TUI flow
 
@@ -138,8 +138,8 @@ hts doctor
 3. For each matching entry:
    - `type: github` (default):
      1. `hctl triggers get-trigger` (org/project/`--target-identifier` pipeline + `--trigger-identifier`)
-     2. Prefer inline `inputYaml` (replace `<+trigger.*>`, convert PR build → branch); else fall back to `inputSetRefs` → `--input-set-identifiers` (matrix `input_set:` can override)
-     3. `hctl pipeline-execute post-pipeline-execute-with-input-set-yaml` with `--body @file` and/or `--input-set-identifiers`, plus `--branch`, optional `--repo-identifier` / `connectorRef`
+     2. Prefer inline `inputYaml` (replace `<+trigger.*>` with the run-time branch / repo / connector; convert PR build → branch); else fall back to `inputSetRefs` → `--input-set-identifiers` (matrix `input_set:` can override)
+     3. Prompt for a git branch per github entry (or use `hts run --branch` for all); then `hctl pipeline-execute post-pipeline-execute-with-input-set-yaml` with `--body @file` and/or `--input-set-identifiers`, plus `--branch`, optional `--repo-identifier` / `connectorRef`
    - `type: custom` → `POST /gateway/pipeline/api/webhook/custom/v2` with triggerIdentifier
 4. Collect success/fail; print a summary table.
 5. If `open_urls` / not `--no-open`, open returned `uiUrl`s (macOS `open`, Linux `xdg-open`).

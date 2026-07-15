@@ -459,7 +459,7 @@ def convert_pr_build(node):
         btype = str(build.get("type") or "").strip().lower()
         if btype in ("pr", "pullrequest", "pull_request"):
             if not branch:
-                warnings.append("PR build type found but no branch set — set branch: on the matrix entry")
+                warnings.append("PR build type found but no branch set — pass a branch at run time")
             build.clear()
             build["type"] = "branch"
             build["spec"] = {"branch": branch or "<+trigger.branch>"}
@@ -731,7 +731,7 @@ for w in json.load(sys.stdin).get("warnings") or []:
     if [[ "$msg" == *404* || "$msg" == *NOT_FOUND* || "$msg" == *"not found"* ]]; then
       hts_err "  hint: confirm org/project/pipeline ids match the Harness URL"
       if [[ -z "$branch" ]]; then
-        hts_err "  hint: git-backed pipelines often need a branch — set branch: on the matrix entry"
+        hts_err "  hint: git-backed pipelines need a branch — you will be prompted at run time (or pass --branch)"
       fi
       if [[ -z "$trigger_id" ]]; then
         hts_err "  hint: set trigger: to a GitHub webhook trigger id so hts can resolve inputYaml"
@@ -766,9 +766,42 @@ hts_fire_entry() {
   esac
 }
 
+hts_prompt_run_branch() {
+  # Prompt for a git branch at run time (per pipeline).
+  # usage: hts_prompt_run_branch alias org project pipeline_id [default]
+  local alias="$1" org="$2" project="$3" pipeline_id="$4" default="${5:-}"
+  local val="" label
+  label="Branch for ${alias} (${org}/${project}/${pipeline_id})"
+  if [[ -n "$default" ]]; then
+    label="${label} [${default}]"
+  fi
+  while true; do
+    print -n -- "${label}: " >/dev/tty 2>/dev/null || print -n -- "${label}: "
+    if ! IFS= read -r val </dev/tty 2>/dev/null; then
+      # no tty — caller should have required --branch
+      print -- "$default"
+      return 0
+    fi
+    val="$(hts_trim "$val")"
+    if [[ -z "$val" && -n "$default" ]]; then
+      print -- "$default"
+      return 0
+    fi
+    if [[ -n "$val" ]]; then
+      print -- "$val"
+      return 0
+    fi
+    print -- "(required)" >/dev/tty 2>/dev/null || print -- "(required)"
+  done
+}
+
 hts_run_matrix() {
-  # usage: hts_run_matrix profile module tech set aliases dry_run open_urls
+  # usage: hts_run_matrix profile module tech set aliases dry_run open_urls [cli_branch]
+  # cli_branch: optional same branch for every github entry (hts run --branch).
+  # Otherwise prompts per github pipeline when a TTY is available.
   local profile="$1" module="$2" tech="${3:-}" set_="${4:-}" aliases="${5:-}" dry_run="${6:-0}" open_urls="${7:-0}"
+  local cli_branch="${8:-}"
+  cli_branch="$(hts_trim "$cli_branch")"
 
   if [[ "$dry_run" != "1" ]] && ! hts_hctl_profile_exists "$profile"; then
     hts_die "hctl profile not found: $profile"
@@ -816,16 +849,58 @@ hts_run_matrix() {
   host="${host%/}"
   host="${host%/gateway}"
 
-  hts_log "profile=$profile module=$module entries=$count dry_run=$dry_run"
+  local have_tty=0
+  if [[ -r /dev/tty ]]; then
+    have_tty=1
+  fi
+
+  # Non-interactive github runs need --branch up front
+  local need_branch_prompt=0
+  if [[ -z "$cli_branch" ]]; then
+    need_branch_prompt="$(print -- "$filtered" | hts_python -c '
+import json,sys
+for e in json.load(sys.stdin):
+    t=(e.get("type") or "github").lower()
+    if t not in ("custom","webhook","custom_webhook"):
+        print(1); raise SystemExit
+print(0)
+')"
+  fi
+  if [[ "$need_branch_prompt" == "1" && "$have_tty" != "1" ]]; then
+    hts_die "branch required for github pipelines — pass: hts run --branch NAME (or run interactively to be prompted per pipeline)"
+    return 1
+  fi
+
+  hts_log "profile=$profile module=$module entries=$count dry_run=$dry_run${cli_branch:+ branch=$cli_branch}"
 
   local ok=0 fail=0
   local results=()
-  local alias trigger org project pid etype branch repo connector input_set
+  local alias trigger org project pid etype repo connector input_set branch
   local resp ui_url trig_status trig_msg fire_ec
 
-  while IFS=$'\t' read -r alias etype trigger org project pid branch repo connector input_set; do
+  while IFS=$'\t' read -r alias etype trigger org project pid repo connector input_set; do
     [[ -n "$alias" ]] || continue
     etype="$(hts_entry_type "$etype")"
+    branch=""
+    if [[ "$etype" != "custom" ]]; then
+      if [[ -n "$cli_branch" ]]; then
+        branch="$cli_branch"
+      else
+        branch="$(hts_prompt_run_branch "$alias" "$org" "$project" "$pid")" || {
+          hts_err "cancelled while prompting for branch ($alias)"
+          fail=$((fail + 1))
+          results+=("${alias}"$'\t'"ERROR"$'\t'"")
+          continue
+        }
+        branch="$(hts_trim "$branch")"
+      fi
+      if [[ -z "$branch" ]]; then
+        hts_err "no branch for $alias — skipping"
+        fail=$((fail + 1))
+        results+=("${alias}"$'\t'"ERROR"$'\t'"")
+        continue
+      fi
+    fi
     hts_log "→ $alias  type=$etype  org=$org project=$project pipeline=$pid branch=${branch:-(-)} trigger=${trigger:-(-)} repo=${repo:-(-)}"
     fire_ec=0
     resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "$dry_run" "$branch" "$repo" "$connector" "$input_set")" || fire_ec=$?
@@ -862,8 +937,6 @@ import json,sys
 for e in json.load(sys.stdin):
     p=e.get("pipeline") or {}
     etype=(e.get("type") or "github").lower()
-    # Both github and custom use trigger: as the Harness trigger identifier.
-    # input_set is optional fallback for execute without a trigger body.
     trig=str(e.get("trigger") or "")
     input_set=str(e.get("input_set") or "")
     print("\t".join([
@@ -873,7 +946,6 @@ for e in json.load(sys.stdin):
         str(p.get("org") or ""),
         str(p.get("project") or ""),
         str(p.get("identifier") or ""),
-        str(e.get("branch") or ""),
         str(e.get("repo") or e.get("repo_identifier") or ""),
         str(e.get("connector") or e.get("connector_ref") or ""),
         input_set,

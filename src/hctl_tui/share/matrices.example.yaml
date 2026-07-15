@@ -16,7 +16,7 @@ entries: []
 #     tech: java
 #     set: shared
 #     trigger: MY_GITHUB_TRIGGER_ID   # required: hctl triggers get-trigger
-#     branch: main                   # resolves <+trigger.branch>; PR build → branch
+#     # branch is NOT stored — prompted at run time (or hts run --branch)
 #     # repo: my-org/my-repo          # optional override → --repo-identifier
 #     # connector: github_connector  # optional override → connectorRef query
 #     pipeline:
