@@ -120,12 +120,31 @@ hts_parse_execution_summary() {
   hts_python -c '
 import json, sys
 
-RUNNING = {
-    "running", "asyncwaiting", "taskwaiting", "timedwaiting", "notstarted",
-    "queued", "paused", "pausing", "resourcewaiting", "interventionwaiting",
-    "approvalwaiting", "waitsteprunning", "queuedlicenselimitreached",
-    "queuedexecutionconcurrencyreached", "inputwaiting", "uploadwaiting",
-    "queuedglobalinfracapacityreached", "queued_plan_creation", "discontinuing",
+# Actively in-flight only — not NotStarted / Queued / Success / Failed.
+ACTIVE = {
+    "running", "asyncwaiting", "taskwaiting", "timedwaiting",
+    "paused", "pausing", "resourcewaiting", "interventionwaiting",
+    "approvalwaiting", "waitsteprunning", "inputwaiting", "uploadwaiting",
+    "discontinuing",
+}
+# Prefer the most "current" status when several stages are active (parallel).
+ACTIVE_RANK = {
+    "running": 0,
+    "discontinuing": 1,
+    "asyncwaiting": 2,
+    "taskwaiting": 2,
+    "timedwaiting": 2,
+    "waitsteprunning": 2,
+    "resourcewaiting": 3,
+    "interventionwaiting": 3,
+    "approvalwaiting": 3,
+    "inputwaiting": 3,
+    "uploadwaiting": 3,
+    "paused": 4,
+    "pausing": 4,
+}
+SKIP_TYPES = {
+    "pipeline", "pipelinesection", "pipelinesectionstage",
 }
 
 def stage_name(node):
@@ -133,37 +152,47 @@ def stage_name(node):
         return ""
     return str(node.get("name") or node.get("nodeIdentifier") or node.get("identifier") or "").strip()
 
-def current_stages(summ):
+def is_stage_node(node):
+    ntype = str(node.get("nodeType") or "").lower()
+    ngroup = str(node.get("nodeGroup") or "").lower()
+    if ntype in SKIP_TYPES or ngroup in SKIP_TYPES:
+        return False
+    # Prefer explicit stage markers; otherwise keep ordinary layout nodes.
+    if ngroup and ngroup not in ("stage", "stages"):
+        # Skip step-level / other groups when nodeGroup is present
+        if ngroup in ("step", "steps", "stepgroup", "step_group"):
+            return False
+    return True
+
+def current_stage(summ):
+    """Single current stage name for this execution (empty if none in flight)."""
     layout = summ.get("layoutNodeMap")
     if not isinstance(layout, dict):
         return ""
-    active = []
+    candidates = []
     for node in layout.values():
-        if not isinstance(node, dict):
+        if not isinstance(node, dict) or not is_stage_node(node):
             continue
         st = str(node.get("status") or "").lower()
-        if st not in RUNNING:
-            continue
-        # Prefer real stages over pipeline/group scaffolding when present
-        ntype = str(node.get("nodeType") or node.get("nodeGroup") or "").lower()
-        if ntype in ("pipeline", "pipelinesection", "pipelinesectionstage"):
+        if st not in ACTIVE:
             continue
         name = stage_name(node)
-        if name and name not in active:
-            active.append(name)
-    if active:
-        return ", ".join(active)
-    # Terminal / idle: show last failed stage if any, else blank
-    failed = []
-    for node in layout.values():
-        if not isinstance(node, dict):
+        if not name:
             continue
-        st = str(node.get("status") or "").lower()
-        if st in ("failed", "errored", "expired", "aborted", "approvalrejected"):
-            name = stage_name(node)
-            if name and name not in failed:
-                failed.append(name)
-    return ", ".join(failed)
+        rank = ACTIVE_RANK.get(st, 99)
+        candidates.append((rank, name))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda x: x[0])
+    best_rank = candidates[0][0]
+    # One name normally; join only if several share the same top rank (true parallel).
+    names = []
+    for rank, name in candidates:
+        if rank != best_rank:
+            break
+        if name not in names:
+            names.append(name)
+    return ", ".join(names)
 
 raw = sys.stdin.read()
 try:
@@ -179,7 +208,7 @@ if run_seq is None:
     run_seq = data.get("runSequence") or ""
 pipe = summ.get("pipelineIdentifier") or data.get("pipelineIdentifier") or ""
 plan = summ.get("planExecutionId") or data.get("planExecutionId") or ""
-stage = current_stages(summ)
+stage = current_stage(summ)
 print("\t".join([str(status), str(run_seq), str(pipe), str(plan), stage]))
 ' 2>/dev/null || print $'\t\t\t\t'
 }

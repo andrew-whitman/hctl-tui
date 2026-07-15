@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hctl-tui"
-version = "0.6.6"
+version = "0.6.7"
 description = "TUI/CLI orchestration for Harness test matrices (pipeline execute, watch, and log export via hctl)."
 readme = "README.md"
 requires-python = ">=3.9"
