@@ -44,6 +44,24 @@ hts_gum_pick() {
   fi
 }
 
+# Multi-select checklist (space to toggle, enter to confirm).
+# Prints selected options, one per line.
+hts_gum_checklist() {
+  unsetopt xtrace verbose 2>/dev/null || true
+  local -a args=(
+    --no-limit
+    --ordered
+    --cursor-prefix="> "
+    --selected-prefix="[x] "
+    --unselected-prefix="[ ] "
+  )
+  if [[ -r /dev/tty ]]; then
+    hts_gum choose "${args[@]}" "$@" </dev/tty
+  else
+    hts_gum choose "${args[@]}" "$@"
+  fi
+}
+
 hts_gum_input() {
   # Capture gum's answer via a temp file so $(...) never races the TUI against
   # gum's stdin/"value from stdin" behavior. Stdin is /dev/null (not a tty), so
@@ -239,15 +257,28 @@ hts_tui_run_suite() {
     hts_gum_pick \
       --height="$(hts_gum_choose_height)" \
       --header "Run $module ($profile)" \
-      "Run" \
-      "Dry-run" \
+      "Run all" \
+      "Dry-run all" \
+      "Select pipelines" \
       "Filter then run" \
       "Cancel"
   )" || return 0
 
   case "$mode" in
     Cancel) return 0 ;;
-    Dry-run) dry_run=1 ;;
+    "Dry-run all") dry_run=1 ;;
+    "Select pipelines")
+      hts_tui_clear
+      aliases="$(hts_tui_pick_aliases "$profile" "$module")" || {
+        hts_gum_box "No pipelines selected."
+        hts_tui_pause
+        return 0
+      }
+      hts_tui_clear
+      if hts_gum confirm --default=false "Dry-run only?"; then
+        dry_run=1
+      fi
+      ;;
     "Filter then run")
       hts_tui_clear
       tech="$(hts_gum_input --placeholder "tech (blank=any)")" || return 0
@@ -258,7 +289,7 @@ hts_tui_run_suite() {
         dry_run=1
       fi
       ;;
-    Run) dry_run=0 ;;
+    "Run all") dry_run=0 ;;
   esac
 
   if hts_open_urls_enabled && [[ "$dry_run" != "1" ]]; then
@@ -395,6 +426,56 @@ for e in json.load(sys.stdin):
   # alias is everything before " — "
   alias="${label%% — *}"
   print -- "$alias"
+}
+
+# Checklist multi-select. Prints comma-separated aliases (ordered).
+# usage: hts_tui_pick_aliases profile module [header]
+hts_tui_pick_aliases() {
+  local profile="$1" module="$2" header="${3:-Select pipelines (space toggle, enter confirm)}"
+  local labels=() label alias aliases=() out ec=0
+  while IFS= read -r label; do
+    [[ -n "$label" ]] && labels+=("$label")
+  done < <(
+    hts_matrix_entries_json "$profile" "$module" | hts_python -c '
+import json,sys
+for e in json.load(sys.stdin):
+    al = e.get("alias") or ""
+    if not al:
+        continue
+    p = e.get("pipeline") or {}
+    tech = e.get("tech") or ""
+    set_ = e.get("set") or ""
+    pipe = "{}/{}/{}".format(p.get("org") or "-", p.get("project") or "-", p.get("identifier") or "-")
+    meta = "/".join(x for x in (tech, set_) if x)
+    if meta:
+        print("{} — {} ({})".format(al, pipe, meta))
+    else:
+        print("{} — {}".format(al, pipe))
+'
+  )
+  if (( ${#labels[@]} == 0 )); then
+    return 1
+  fi
+  hts_tui_clear
+  out="$(hts_mktemp pick-aliases)" || return 1
+  if ! hts_gum_checklist \
+      --height="$(hts_gum_choose_height)" \
+      --header "$header" \
+      "${labels[@]}" >"$out"; then
+    ec=$?
+    hts_rm -f "$out"
+    return "$ec"
+  fi
+  while IFS= read -r label; do
+    [[ -n "$label" ]] || continue
+    alias="${label%% — *}"
+    [[ -n "$alias" ]] && aliases+=("$alias")
+  done <"$out"
+  hts_rm -f "$out"
+
+  (( ${#aliases[@]} )) || return 1
+  local IFS=,
+  print -- "${aliases[*]}"
 }
 
 hts_tui_matrix_edit() {

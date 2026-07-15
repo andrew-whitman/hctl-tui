@@ -102,11 +102,13 @@ entries: []
 
 Flat home menu (active hctl profile used by default — no per-action picker):
 
-- Run test suite → module (skipped if one) → Run / Dry-run / Filter then run
+- Run test suite → module (skipped if one) → Run all / Dry-run all / **Select pipelines** (checklist) / Filter then run
 - Add pipeline → alias, org, project, pipeline id, trigger id, set
 - List pipelines / Remove pipeline (alias chooser)
 - Export / Import → share matrices + redacted profile stubs across machines
 - Profiles / Settings (looping submenus)
+
+**Select pipelines:** gum multi-select checklist (`space` toggle, `enter` confirm). Runs only the checked aliases (same as `hts run --alias a,b`).
 
 ## CLI (non-interactive)
 

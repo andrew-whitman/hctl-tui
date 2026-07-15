@@ -54,6 +54,8 @@ Non-interactive:
 hts run --module ci --dry-run
 hts run --module ci --tech java --set shared
 hts run --module ci --branch main
+hts run --module ci --alias a1,a2          # specific pipelines (CLI)
+# TUI: Run test suite → Select pipelines (space to toggle checklist)
 hts matrix list --module ci
 hts matrix add --module ci \
   --type github --alias my-alias --trigger YOUR_TRIGGER_ID \
