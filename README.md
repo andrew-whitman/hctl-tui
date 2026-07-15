@@ -63,6 +63,8 @@ hts matrix edit --module ci --alias my-alias --set shared
 hts matrix remove --module ci --alias my-alias
 hts profile list
 hts profile use default
+hts export --out ./my-suite          # matrices + redacted profile stubs
+hts import ./my-suite --as sandbox   # remap into profile "sandbox"
 hts doctor
 ```
 
@@ -73,6 +75,19 @@ hts doctor
 | `~/.config/hctl/config.json` | Auth (host, account, API key) — owned by **hctl** |
 | `~/.config/hctl-tui/config.yaml` | Active profile pointer + UI defaults |
 | `~/.config/hctl-tui/matrices/<profile>/<module>.yaml` | Test matrices |
+
+### Export / import
+
+Share matrices (and optional hctl profile stubs) between machines:
+
+```bash
+hts export --out ./hts-bundle              # active profile; API keys redacted
+hts export --profile all --out ./all       # every profile
+hts import ./hts-bundle                    # merge; skip existing files
+hts import ./hts-bundle --as other --force # remap + overwrite
+```
+
+Bundle layout: `manifest.yaml`, `matrices/<profile>/*.yaml`, `profiles/<name>.json` (no `api_key` unless `--include-secrets`). After import, set the API key with `hts profile init`.
 
 See [hctl-tui-spec.md](hctl-tui-spec.md) for the full contract.
 

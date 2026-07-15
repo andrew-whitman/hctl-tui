@@ -187,6 +187,7 @@ hts_tui_main() {
         "Edit pipeline" \
         "List pipelines" \
         "Remove pipeline" \
+        "Export / Import" \
         "Profiles" \
         "Settings" \
         "Quit"
@@ -198,6 +199,7 @@ hts_tui_main() {
       "Edit pipeline")    hts_tui_matrix_edit || true ;;
       "List pipelines")   hts_tui_list_matrix || true ;;
       "Remove pipeline")  hts_tui_remove_entry || true ;;
+      "Export / Import")  hts_tui_transfer || true ;;
       "Profiles")         hts_tui_profiles || true ;;
       "Settings")         hts_tui_settings || true ;;
       "Quit"|*)
@@ -604,6 +606,61 @@ hts_tui_settings() {
         local new
         if hts_open_urls_enabled; then new=false; else new=true; fi
         hts_cfg_set_str '.defaults.open_urls' "$new"
+        ;;
+      Back|*) return 0 ;;
+    esac
+  done
+}
+
+hts_tui_transfer() {
+  while true; do
+    hts_tui_clear
+    local action
+    action="$(
+      hts_gum_pick \
+        --height="$(hts_gum_choose_height)" \
+        --header "Export / Import  ·  share matrices across machines" \
+        "Export active profile" \
+        "Export all profiles" \
+        "Import bundle" \
+        "Back"
+    )" || return 0
+
+    case "$action" in
+      "Export active profile"|"Export all profiles")
+        hts_tui_clear
+        local out profile secrets=0
+        profile="$(hts_active_profile 2>/dev/null || print default)"
+        [[ "$action" == "Export all profiles" ]] && profile=all
+        out="$(hts_gum_input --value "$(hts_transfer_default_out)" --placeholder "output directory")" || continue
+        [[ -n "$out" ]] || continue
+        if hts_gum confirm "Include API keys in the bundle? (usually no)"; then
+          secrets=1
+        fi
+        hts_tui_clear
+        if hts_export_bundle "$out" "$profile" "$secrets" 1; then
+          hts_gum_box "Exported → $out"
+        else
+          hts_gum_box_error "Export failed"
+        fi
+        hts_tui_pause
+        ;;
+      "Import bundle")
+        hts_tui_clear
+        local src as_profile="" force=0
+        src="$(hts_gum_input --placeholder "path to export directory")" || continue
+        [[ -n "$src" ]] || continue
+        as_profile="$(hts_gum_input --placeholder "remap to profile (blank=keep names)")" || continue
+        if hts_gum confirm "Overwrite existing matrix files?"; then
+          force=1
+        fi
+        hts_tui_clear
+        if hts_import_bundle "$src" "$as_profile" "$force" 0 1; then
+          hts_gum_box "Import finished"
+        else
+          hts_gum_box_error "Import failed (or nothing to import)"
+        fi
+        hts_tui_pause
         ;;
       Back|*) return 0 ;;
     esac

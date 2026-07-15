@@ -30,6 +30,7 @@ source "$HTS_LIB/deps.sh"
 source "$HTS_LIB/profiles.sh"
 source "$HTS_LIB/pipelines.sh"
 source "$HTS_LIB/runner.sh"
+source "$HTS_LIB/transfer.sh"
 source "$HTS_LIB/tui.sh"
 
 # Re-assert PATH after libs (mkdir user bin + de-dupe)
@@ -51,6 +52,8 @@ Usage:
       Fire or dry-run a matrix
   hts profile list|use NAME|init [NAME]
   hts matrix list|add|edit|remove [options]
+  hts export [--out DIR] [--profile NAME|all] [--include-secrets] [--no-config]
+  hts import PATH [--as NAME] [--force] [--with-config] [--no-profiles]
 
 Init installs peer tools when missing
 (prefer uv for hctl; brew/GitHub for gum).
@@ -89,6 +92,12 @@ type=custom: POST Harness custom webhook trigger.
 Branch is not stored on matrix entries — prompted at run (or --branch).
 Edit (CLI): only flags you pass are changed.
 Edit (TUI): pick a pipeline; blank keeps the current value.
+
+Export / import:
+  Bundles matrices + redacted hctl profile stubs (host/account/org/project).
+  API keys are omitted unless --include-secrets. Import merges matrices;
+  existing files are skipped unless --force. Recipients set their own API key
+  via hts profile init / hctl.
 EOF
 }
 
@@ -365,6 +374,72 @@ hts_cmd_doctor() {
   fi
 }
 
+hts_cmd_export() {
+  local out="" profile="" include_secrets=0 include_config=1
+  while (( $# )); do
+    case "$1" in
+      --out|-o) out="$2"; shift 2 ;;
+      --profile|-p) profile="$2"; shift 2 ;;
+      --all) profile=all; shift ;;
+      --include-secrets) include_secrets=1; shift ;;
+      --no-config) include_config=0; shift ;;
+      -h|--help)
+        print -- "usage: hts export [--out DIR] [--profile NAME|all] [--include-secrets] [--no-config]"
+        print -- "  Writes a portable bundle: matrices + redacted hctl profile stubs."
+        print -- "  Default: active profile. Use --profile all for every profile."
+        print -- "  API keys are redacted unless --include-secrets."
+        return 0
+        ;;
+      *)
+        if [[ -z "$out" && "$1" != --* ]]; then
+          out="$1"; shift
+        else
+          hts_die "unknown option: $1 (try: hts export --help)"
+          return 1
+        fi
+        ;;
+    esac
+  done
+
+  hts_require_deps matrix || return 1
+  hts_ensure_config
+  [[ -n "$out" ]] || out="$(hts_transfer_default_out)"
+  [[ -n "$profile" ]] || profile="$(hts_active_profile)"
+  hts_export_bundle "$out" "$profile" "$include_secrets" "$include_config"
+}
+
+hts_cmd_import() {
+  local src="" as_profile="" force=0 import_config=0 import_profiles=1
+  while (( $# )); do
+    case "$1" in
+      --as|--profile) as_profile="$2"; shift 2 ;;
+      --force|-f) force=1; shift ;;
+      --with-config) import_config=1; shift ;;
+      --no-profiles) import_profiles=0; shift ;;
+      -h|--help)
+        print -- "usage: hts import PATH [--as NAME] [--force] [--with-config] [--no-profiles]"
+        print -- "  Imports matrices (and optional hctl profile stubs) from an export bundle."
+        print -- "  Existing matrix files are skipped unless --force."
+        print -- "  --as NAME remaps a single-profile bundle into that profile name."
+        return 0
+        ;;
+      *)
+        if [[ -z "$src" && "$1" != --* ]]; then
+          src="$1"; shift
+        else
+          hts_die "unknown option: $1 (try: hts import --help)"
+          return 1
+        fi
+        ;;
+    esac
+  done
+
+  [[ -n "$src" ]] || { hts_die "usage: hts import PATH [--as NAME] [--force] [--with-config] [--no-profiles]"; return 1; }
+  hts_require_deps matrix || return 1
+  hts_ensure_config
+  hts_import_bundle "$src" "$as_profile" "$force" "$import_config" "$import_profiles"
+}
+
 main() {
   local cmd="${1:-}"
   if [[ -z "$cmd" ]]; then
@@ -383,6 +458,8 @@ main() {
     profile) hts_cmd_profile "$@" ;;
     matrix)  hts_cmd_matrix "$@" ;;
     doctor)  hts_cmd_doctor "$@" ;;
+    export)  hts_cmd_export "$@" ;;
+    import)  hts_cmd_import "$@" ;;
     help|-h|--help) hts_usage ;;
     *)
       # Allow `hts --module ci` as shorthand for run

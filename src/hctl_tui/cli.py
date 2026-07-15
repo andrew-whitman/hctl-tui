@@ -80,6 +80,9 @@ def main(argv: list[str] | None = None) -> None:
     env["PATH"] = path
     env["HTS_ROOT"] = str(share)
     env["HTS_LIB"] = str(share / "lib")
+    # Shell helpers call `hts_python`; use this interpreter so PyYAML from the
+    # package env is visible (system python3 often lacks it).
+    env["HTS_PYTHON"] = sys.executable
 
     zsh = find_zsh(path)
     if not zsh:

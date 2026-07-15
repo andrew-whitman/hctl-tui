@@ -15,6 +15,16 @@ ROOT="$(cd -- "${0:A:h}/.." && pwd)"
 SHARE="$ROOT/src/hctl_tui/share"
 export HTS_ROOT="$SHARE"
 export HTS_LIB="$SHARE/lib"
+# Prefer project venv Python (has PyYAML) when developing from a checkout.
+if [[ -z "${HTS_PYTHON:-}" ]]; then
+  for _hts_py in "$ROOT/.venv/bin/python" "$ROOT/.venv/bin/python3"; do
+    if [[ -x "$_hts_py" ]]; then
+      export HTS_PYTHON="$_hts_py"
+      break
+    fi
+  done
+  unset _hts_py
+fi
 
 zsh_bin=/bin/zsh
 [[ -x $zsh_bin ]] || zsh_bin=/usr/bin/zsh

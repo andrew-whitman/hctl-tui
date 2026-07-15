@@ -103,8 +103,9 @@ entries: []
 Flat home menu (active hctl profile used by default — no per-action picker):
 
 - Run test suite → module (skipped if one) → Run / Dry-run / Filter then run
-- Add pipeline → alias, org, project, pipeline id, trigger id, optional branch, set
+- Add pipeline → alias, org, project, pipeline id, trigger id, set
 - List pipelines / Remove pipeline (alias chooser)
+- Export / Import → share matrices + redacted profile stubs across machines
 - Profiles / Settings (looping submenus)
 
 ## CLI (non-interactive)
@@ -127,10 +128,26 @@ hts matrix add --module ci --alias A --trigger T --tech TECH --set SET \
   --pipeline-org ORG --pipeline-project PROJ --pipeline-id ID [--profile NAME]
 hts matrix remove --module ci --alias A [--profile NAME]
 
+# Export / import (portable bundle; API keys redacted by default)
+hts export [--out DIR] [--profile NAME|all] [--include-secrets] [--no-config]
+hts import PATH [--as NAME] [--force] [--with-config] [--no-profiles]
+
 # Health
 hts doctor
 ```
 
+## Export bundle format
+
+Directory layout produced by `hts export`:
+
+```
+manifest.yaml                 # format: hctl-tui-export, format_version: 1
+matrices/<profile>/*.yaml     # copied matrix modules
+profiles/<profile>.json       # host/account/org/project; api_key empty unless --include-secrets
+hctl-tui-config.yaml          # optional local defaults (omit with --no-config)
+```
+
+`hts import` merges matrices into `~/.config/hctl-tui/matrices/` (skip existing unless `--force`), optionally merges hctl profile stubs (no blank key overwrite), and remaps a single-profile bundle with `--as NAME`.
 ## Runner contract
 
 1. Resolve active hctl profile (`--profile`, else `config.yaml` → `active_hctl_profile`, else hctl current).
