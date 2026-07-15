@@ -116,14 +116,60 @@ else:
 
 hts_parse_execution_summary() {
   # stdin: execution detail JSON
-  # stdout: status \t runSequence \t pipelineIdentifier \t planExecutionId
+  # stdout: status \t runSequence \t pipelineIdentifier \t planExecutionId \t currentStage
   hts_python -c '
 import json, sys
+
+RUNNING = {
+    "running", "asyncwaiting", "taskwaiting", "timedwaiting", "notstarted",
+    "queued", "paused", "pausing", "resourcewaiting", "interventionwaiting",
+    "approvalwaiting", "waitsteprunning", "queuedlicenselimitreached",
+    "queuedexecutionconcurrencyreached", "inputwaiting", "uploadwaiting",
+    "queuedglobalinfracapacityreached", "queued_plan_creation", "discontinuing",
+}
+
+def stage_name(node):
+    if not isinstance(node, dict):
+        return ""
+    return str(node.get("name") or node.get("nodeIdentifier") or node.get("identifier") or "").strip()
+
+def current_stages(summ):
+    layout = summ.get("layoutNodeMap")
+    if not isinstance(layout, dict):
+        return ""
+    active = []
+    for node in layout.values():
+        if not isinstance(node, dict):
+            continue
+        st = str(node.get("status") or "").lower()
+        if st not in RUNNING:
+            continue
+        # Prefer real stages over pipeline/group scaffolding when present
+        ntype = str(node.get("nodeType") or node.get("nodeGroup") or "").lower()
+        if ntype in ("pipeline", "pipelinesection", "pipelinesectionstage"):
+            continue
+        name = stage_name(node)
+        if name and name not in active:
+            active.append(name)
+    if active:
+        return ", ".join(active)
+    # Terminal / idle: show last failed stage if any, else blank
+    failed = []
+    for node in layout.values():
+        if not isinstance(node, dict):
+            continue
+        st = str(node.get("status") or "").lower()
+        if st in ("failed", "errored", "expired", "aborted", "approvalrejected"):
+            name = stage_name(node)
+            if name and name not in failed:
+                failed.append(name)
+    return ", ".join(failed)
+
 raw = sys.stdin.read()
 try:
     d = json.loads(raw)
 except Exception:
-    print("\t\t\t")
+    print("\t\t\t\t")
     raise SystemExit(0)
 data = d.get("data") if isinstance(d.get("data"), dict) else d
 summ = data.get("pipelineExecutionSummary") if isinstance(data.get("pipelineExecutionSummary"), dict) else {}
@@ -133,12 +179,13 @@ if run_seq is None:
     run_seq = data.get("runSequence") or ""
 pipe = summ.get("pipelineIdentifier") or data.get("pipelineIdentifier") or ""
 plan = summ.get("planExecutionId") or data.get("planExecutionId") or ""
-print("\t".join([str(status), str(run_seq), str(pipe), str(plan)]))
-' 2>/dev/null || print $'\t\t\t'
+stage = current_stages(summ)
+print("\t".join([str(status), str(run_seq), str(pipe), str(plan), stage]))
+' 2>/dev/null || print $'\t\t\t\t'
 }
 
 hts_format_watch_table() {
-  # stdin: TSV alias \t status \t runSequence \t shortId
+  # stdin: TSV alias \t status \t runSequence \t stage \t shortId
   local cols raw
   cols="$(hts_term_cols)"
   raw="$(/bin/cat)"
@@ -165,28 +212,46 @@ def trunc(s, n):
 rows = []
 for ln in lines:
     parts = ln.split("\t")
-    while len(parts) < 4:
+    while len(parts) < 5:
         parts.append("")
-    rows.append(parts[:4])
+    rows.append(parts[:5])
 
 print("WATCH")
-w_alias = min(24, max(8, cols // 4))
-w_status = 18
-w_run = 8
-w_id = max(10, cols - w_alias - w_status - w_run - 3)
-print("{:<{a}} {:<{s}} {:<{r}} {}".format(
-    "ALIAS", "STATUS", "RUN#", "EXECUTION", a=w_alias, s=w_status, r=w_run))
-print("-" * min(cols, w_alias + w_status + w_run + w_id + 3))
-for alias, status, run_seq, short_id in rows:
-    print("{:<{a}} {:<{s}} {:<{r}} {}".format(
-        trunc(alias, w_alias),
-        trunc(status, w_status),
-        trunc(run_seq, w_run),
-        trunc(short_id, w_id),
-        a=w_alias,
-        s=w_status,
-        r=w_run,
-    ))
+if cols < 72:
+    width = max(24, cols)
+    for i, (alias, status, run_seq, stage, short_id) in enumerate(rows):
+        if i:
+            print("-" * min(width, cols))
+        print("alias:  " + trunc(alias, max(8, width - 8)))
+        print("status: " + trunc(status, max(8, width - 8)))
+        if run_seq:
+            print("run#:   " + trunc(run_seq, max(8, width - 8)))
+        if stage:
+            print("stage:  " + trunc(stage, max(8, width - 8)))
+        if short_id:
+            print("exec:   " + trunc(short_id, max(8, width - 8)))
+else:
+    w_alias = min(20, max(8, cols // 5))
+    w_status = 14
+    w_run = 6
+    w_stage = min(28, max(10, cols // 4))
+    w_id = max(8, cols - w_alias - w_status - w_run - w_stage - 4)
+    print("{:<{a}} {:<{s}} {:<{r}} {:<{g}} {}".format(
+        "ALIAS", "STATUS", "RUN#", "STAGE", "EXECUTION",
+        a=w_alias, s=w_status, r=w_run, g=w_stage))
+    print("-" * min(cols, w_alias + w_status + w_run + w_stage + w_id + 4))
+    for alias, status, run_seq, stage, short_id in rows:
+        print("{:<{a}} {:<{s}} {:<{r}} {:<{g}} {}".format(
+            trunc(alias, w_alias),
+            trunc(status, w_status),
+            trunc(run_seq, w_run),
+            trunc(stage or "-", w_stage),
+            trunc(short_id, w_id),
+            a=w_alias,
+            s=w_status,
+            r=w_run,
+            g=w_stage,
+        ))
 PY
 }
 
@@ -230,7 +295,7 @@ hts_watch_last_batch() {
   started="$(hts_cmd date +%s)"
   local alias org project pid exec_id ui_url st
   # Note: zsh reserves readonly `status` (== $?); never use that name as a local.
-  local detail exec_status run_seq pipe_id plan_id short_id
+  local detail exec_status run_seq pipe_id plan_id stage_name short_id
   local -a table=()
   local any_err=0
 
@@ -247,17 +312,17 @@ hts_watch_last_batch() {
       IFS=$'\t' read -r alias org project pid exec_id ui_url st <<<"$line"
       detail="$(hts_get_execution_detail_json "$profile" "$org" "$project" "$exec_id")" || {
         any_err=1
-        table+=("${alias}"$'\t'"ERROR"$'\t'""$'\t'"${exec_id:0:12}…")
+        table+=("${alias}"$'\t'"ERROR"$'\t'""$'\t'""$'\t'"${exec_id:0:12}…")
         all_done=0
         continue
       }
-      IFS=$'\t' read -r exec_status run_seq pipe_id plan_id <<<"$(print -- "$detail" | hts_parse_execution_summary)"
+      IFS=$'\t' read -r exec_status run_seq pipe_id plan_id stage_name <<<"$(print -- "$detail" | hts_parse_execution_summary)"
       exec_status="${exec_status:-UNKNOWN}"
       short_id="$exec_id"
       if (( ${#short_id} > 16 )); then
         short_id="${short_id:0:12}…"
       fi
-      table+=("${alias}"$'\t'"${exec_status}"$'\t'"${run_seq}"$'\t'"${short_id}")
+      table+=("${alias}"$'\t'"${exec_status}"$'\t'"${run_seq}"$'\t'"${stage_name}"$'\t'"${short_id}")
       if ! hts_execution_status_is_terminal "$exec_status"; then
         all_done=0
       fi
@@ -378,9 +443,9 @@ hts_fetch_execution_logs() {
   }
 
   # Note: zsh reserves readonly `status` (== $?); never use that name as a local.
-  local detail exec_status run_seq pipe_from_api _
+  local detail exec_status run_seq pipe_from_api _plan_unused _stage_unused
   detail="$(hts_get_execution_detail_json "$profile" "$org" "$project" "$plan_id")" || return 1
-  IFS=$'\t' read -r exec_status run_seq pipe_from_api _ <<<"$(print -- "$detail" | hts_parse_execution_summary)"
+  IFS=$'\t' read -r exec_status run_seq pipe_from_api _plan_unused _stage_unused <<<"$(print -- "$detail" | hts_parse_execution_summary)"
   [[ -n "$pipe_from_api" ]] && pipeline_id="$pipe_from_api"
 
   if [[ -z "$run_seq" ]]; then
