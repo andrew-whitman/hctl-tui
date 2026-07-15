@@ -701,10 +701,11 @@ for w in json.load(sys.stdin).get("warnings") or []:
     [[ -n "$repo" ]] && print -u2 -- "  repo=$repo"
     [[ -n "$connector" ]] && print -u2 -- "  connector=$connector"
     if [[ -n "$body_file" && -f "$body_file" ]]; then
-      print -u2 -- "  body @${body_file}:"
-      /bin/sed 's/^/    /' "$body_file" 1>&2 || true
+      local nbytes
+      nbytes="$(/usr/bin/wc -c <"$body_file" 2>/dev/null | tr -d '[:space:]')"
+      print -u2 -- "  body=@file (${nbytes:-?} bytes resolved; omitted from dry-run log)"
     fi
-    "${cmd[@]}" --dry-run --curl 1>&2 || true
+    # Summary only — do not dump inputYaml or hctl --curl (both are huge).
     hts_rm -f "$body_file"
     return 0
   fi

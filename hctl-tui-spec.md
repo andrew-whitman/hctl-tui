@@ -160,7 +160,7 @@ hctl-tui-config.yaml          # optional local defaults (omit with --no-config)
    - `type: custom` → `POST /gateway/pipeline/api/webhook/custom/v2` with triggerIdentifier
 4. Collect success/fail; print a summary table.
 5. If `open_urls` / not `--no-open`, open returned `uiUrl`s (macOS `open`, Linux `xdg-open`).
-6. `--dry-run`: fetch+resolve (when authenticated) and print `hctl … --dry-run --curl` without POSTing.
+6. `--dry-run`: fetch+resolve (when authenticated) and print a short execute summary (profile/org/pipeline/branch/inputs) without POSTing or dumping inputYaml / curl.
 
 ## Design principles
 
