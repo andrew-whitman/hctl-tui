@@ -270,7 +270,7 @@ hts_tui_run_suite() {
     [[ -n "$set_" ]] && print -- "set=$set_"
     [[ -n "$aliases" ]] && print -- "alias=$aliases"
     (( dry_run )) && print -- "mode=dry-run"
-    print -- "You will be asked for a branch per pipeline."
+    print -- "You will enter a branch for each pipeline first, then triggers start."
     print -- ""
     hts_preview_matrix "$profile" "$module" "$tech" "$set_" "$aliases"
   } | hts_tui_show

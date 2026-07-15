@@ -875,11 +875,43 @@ print(0)
 
   local ok=0 fail=0
   local results=()
+  local targets=()
   local alias trigger org project pid etype repo connector input_set branch
-  local resp ui_url trig_status trig_msg fire_ec
+  local resp ui_url trig_status trig_msg fire_ec line
 
+  # Materialize target rows first (no network yet).
   while IFS=$'\t' read -r alias etype trigger org project pid repo connector input_set; do
     [[ -n "$alias" ]] || continue
+    targets+=("${alias}"$'\t'"${etype}"$'\t'"${trigger}"$'\t'"${org}"$'\t'"${project}"$'\t'"${pid}"$'\t'"${repo}"$'\t'"${connector}"$'\t'"${input_set}")
+  done < <(print -- "$filtered" | hts_python -c '
+import json,sys
+for e in json.load(sys.stdin):
+    p=e.get("pipeline") or {}
+    etype=(e.get("type") or "github").lower()
+    trig=str(e.get("trigger") or "")
+    input_set=str(e.get("input_set") or "")
+    print("\t".join([
+        str(e.get("alias") or ""),
+        str(e.get("type") or "github"),
+        trig,
+        str(p.get("org") or ""),
+        str(p.get("project") or ""),
+        str(p.get("identifier") or ""),
+        str(e.get("repo") or e.get("repo_identifier") or ""),
+        str(e.get("connector") or e.get("connector_ref") or ""),
+        input_set,
+    ]))
+')
+
+  # Collect all runtime inputs (branches) before any get-trigger / execute calls.
+  local -a planned=()
+  local skipped=0
+  if [[ -z "$cli_branch" && "$need_branch_prompt" == "1" ]]; then
+    hts_log "enter a branch for each pipeline (before triggering)…"
+    print -- "" >/dev/tty 2>/dev/null || true
+  fi
+  for line in "${targets[@]}"; do
+    IFS=$'\t' read -r alias etype trigger org project pid repo connector input_set <<<"$line"
     etype="$(hts_entry_type "$etype")"
     branch=""
     if [[ "$etype" != "custom" ]]; then
@@ -888,7 +920,7 @@ print(0)
       else
         branch="$(hts_prompt_run_branch "$alias" "$org" "$project" "$pid")" || {
           hts_err "cancelled while prompting for branch ($alias)"
-          fail=$((fail + 1))
+          skipped=$((skipped + 1))
           results+=("${alias}"$'\t'"ERROR"$'\t'"")
           continue
         }
@@ -896,11 +928,26 @@ print(0)
       fi
       if [[ -z "$branch" ]]; then
         hts_err "no branch for $alias — skipping"
-        fail=$((fail + 1))
+        skipped=$((skipped + 1))
         results+=("${alias}"$'\t'"ERROR"$'\t'"")
         continue
       fi
     fi
+    planned+=("${alias}"$'\t'"${etype}"$'\t'"${trigger}"$'\t'"${org}"$'\t'"${project}"$'\t'"${pid}"$'\t'"${repo}"$'\t'"${connector}"$'\t'"${input_set}"$'\t'"${branch}")
+  done
+
+  if (( ${#planned[@]} == 0 )); then
+    hts_err "nothing to run (no branches collected)"
+    return 1
+  fi
+
+  if [[ -z "$cli_branch" && "$need_branch_prompt" == "1" ]]; then
+    print -- "" >/dev/tty 2>/dev/null || true
+    hts_log "inputs collected — triggering ${#planned[@]} pipeline(s)…"
+  fi
+
+  for line in "${planned[@]}"; do
+    IFS=$'\t' read -r alias etype trigger org project pid repo connector input_set branch <<<"$line"
     hts_log "→ $alias  type=$etype  org=$org project=$project pipeline=$pid branch=${branch:-(-)} trigger=${trigger:-(-)} repo=${repo:-(-)}"
     fire_ec=0
     resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "$dry_run" "$branch" "$repo" "$connector" "$input_set")" || fire_ec=$?
@@ -932,25 +979,9 @@ print(0)
       fi
     fi
     results+=("${alias}"$'\t'"${trig_status}"$'\t'"${ui_url:-}")
-  done < <(print -- "$filtered" | hts_python -c '
-import json,sys
-for e in json.load(sys.stdin):
-    p=e.get("pipeline") or {}
-    etype=(e.get("type") or "github").lower()
-    trig=str(e.get("trigger") or "")
-    input_set=str(e.get("input_set") or "")
-    print("\t".join([
-        str(e.get("alias") or ""),
-        str(e.get("type") or "github"),
-        trig,
-        str(p.get("org") or ""),
-        str(p.get("project") or ""),
-        str(p.get("identifier") or ""),
-        str(e.get("repo") or e.get("repo_identifier") or ""),
-        str(e.get("connector") or e.get("connector_ref") or ""),
-        input_set,
-    ]))
-')
+  done
+
+  fail=$((fail + skipped))
 
   print -- ""
   if (( ${#results[@]} )); then
