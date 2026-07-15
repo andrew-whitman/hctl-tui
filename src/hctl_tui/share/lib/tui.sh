@@ -135,12 +135,14 @@ hts_tty_read_line_cancelable() {
   local buf="" c rest more ord
   local KEYTIMEOUT=1
   local stty_saved=""
-  # Disable kernel echo; we echo ourselves (avoids double characters).
+  # Disable kernel echo; we echo ourselves. Also use read -s — zsh's
+  # read -k echoes by default, which doubles every character on screen
+  # and breaks backspace when we also print to /dev/tty.
   stty_saved="$(stty -g </dev/tty 2>/dev/null || true)"
   stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null || true
   {
     while true; do
-      if ! read -r -k 1 c </dev/tty 2>/dev/null; then
+      if ! read -r -s -k 1 c </dev/tty 2>/dev/null; then
         hts_tui_request_home
         return 1
       fi
@@ -149,8 +151,8 @@ hts_tty_read_line_cancelable() {
       printf -v ord '%d' "'$c" 2>/dev/null || ord=0
       if (( ord == 27 )); then
         rest=""
-        if read -t 0.05 -r -k 1 rest </dev/tty 2>/dev/null; then
-          while read -t 0.05 -r -k 1 more </dev/tty 2>/dev/null; do
+        if read -t 0.05 -r -s -k 1 rest </dev/tty 2>/dev/null; then
+          while read -t 0.05 -r -s -k 1 more </dev/tty 2>/dev/null; do
             [[ "$more" == [~A-Za-z] ]] && break
           done
           continue
