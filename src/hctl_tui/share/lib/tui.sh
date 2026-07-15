@@ -338,9 +338,14 @@ hts_tui_run_suite() {
     [[ -n "$tech" ]] && print -- "tech=$tech"
     [[ -n "$set_" ]] && print -- "set=$set_"
     [[ -n "$aliases" ]] && print -- "alias=$aliases"
-    (( dry_run )) && print -- "mode=dry-run"
-    print -- "You will enter the app/source branch for each pipeline first"
-    print -- "(the repo under test — not the pipeline template branch), then triggers start."
+    if (( dry_run )); then
+      print -- "mode=dry-run  (preflight only — no execute)"
+      print -- "You will enter the app/source branch for each pipeline,"
+      print -- "then each alias prints SUCCESS or FAIL."
+    else
+      print -- "You will enter the app/source branch for each pipeline first"
+      print -- "(the repo under test — not the pipeline template branch), then triggers start."
+    fi
     print -- ""
     hts_preview_matrix "$profile" "$module" "$tech" "$set_" "$aliases"
   } | hts_tui_show

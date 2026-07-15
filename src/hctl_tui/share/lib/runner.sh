@@ -140,25 +140,25 @@ hts_fire_custom_trigger() {
   account="$(hts_trim "$account")"
 
   if [[ -z "$account" ]]; then
-    if [[ "$dry_run" == "1" ]]; then
-      account="ACCOUNT"
-      hts_log "warn: profile '$profile' has no account (dry-run placeholder)"
-    else
-      hts_err "profile '$profile' has no account — run: hctl init --profile $profile"
-      return 1
-    fi
+    hts_err "profile '$profile' has no account — run: hctl init --profile $profile"
+    return 1
   fi
-  if [[ "$dry_run" != "1" && -z "$api_key" && -z "${HARNESS_API_KEY:-}" ]]; then
+  if [[ -z "$api_key" && -z "${HARNESS_API_KEY:-}" ]]; then
     hts_err "no API key for profile '$profile' (set in hctl or HARNESS_API_KEY)"
     return 1
   fi
   api_key="${api_key:-${HARNESS_API_KEY:-}}"
 
+  if [[ -z "$org" || -z "$project" || -z "$pipeline_id" || -z "$trigger_id" ]]; then
+    hts_err "custom trigger missing org/project/pipeline/trigger"
+    return 1
+  fi
+
   local url
   url="${host}/gateway/pipeline/api/webhook/custom/v2?accountIdentifier=$(hts_urlencode "$account")&orgIdentifier=$(hts_urlencode "$org")&projectIdentifier=$(hts_urlencode "$project")&pipelineIdentifier=$(hts_urlencode "$pipeline_id")&triggerIdentifier=$(hts_urlencode "$trigger_id")"
 
   if [[ "$dry_run" == "1" ]]; then
-    hts_log "dry-run  custom  ${org}/${project}/${pipeline_id}  trigger=${trigger_id}"
+    # Preflight only: auth + required ids present (no POST).
     return 0
   fi
 
@@ -599,53 +599,46 @@ hts_fire_pipeline_execute() {
   }
 
   if [[ -z "$account" ]]; then
-    if [[ "$dry_run" == "1" ]]; then
-      account="ACCOUNT"
-      hts_log "warn: profile '$profile' has no account (dry-run placeholder)"
-    else
-      hts_err "profile '$profile' has no account — run: hctl init --profile $profile"
-      return 1
-    fi
+    hts_err "profile '$profile' has no account — run: hctl init --profile $profile"
+    return 1
   fi
 
   local body_file="" has_body=0 resolved_meta=""
   local trig_file=""
 
   if [[ -n "$trigger_id" ]]; then
-    if [[ "$dry_run" == "1" && "$account" == "ACCOUNT" ]]; then
-      : # skip get-trigger without a real account; summary still printed below
-    else
-      trig_file="$(hts_mktemp hts-trigger)" || {
-        hts_err "could not create temp trigger file"
-        return 1
-      }
-      hts_fetch_trigger_json "$profile" "$account" "$org" "$project" "$pipeline_id" "$trigger_id" "$trig_file" || {
-        hts_rm -f "$trig_file"
-        return 1
-      }
-      body_file="$(hts_mktemp hts-body)" || {
-        hts_err "could not create temp body file"
-        hts_rm -f "$trig_file"
-        return 1
-      }
-      resolved_meta="$(
-        hts_resolve_trigger_input_yaml "$trig_file" "$branch" "$repo" "$connector" "$body_file"
-      )" || {
-        local ec=$?
-        hts_rm -f "$trig_file" "$body_file"
-        return $ec
-      }
+    trig_file="$(hts_mktemp hts-trigger)" || {
+      hts_err "could not create temp trigger file"
+      return 1
+    }
+    hts_fetch_trigger_json "$profile" "$account" "$org" "$project" "$pipeline_id" "$trigger_id" "$trig_file" || {
       hts_rm -f "$trig_file"
-      branch="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("branch") or "")')"
-      repo="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("repo") or "")')"
-      connector="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("connector") or "")')"
-      has_body="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(1 if json.load(sys.stdin).get("has_body") else 0)')"
-      # Fallback: trigger inputSetRefs when there is no inline inputYaml
-      local trigger_input_sets=""
-      trigger_input_sets="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("input_set_refs") or "")')"
-      if [[ -z "$input_set" && -n "$trigger_input_sets" ]]; then
-        input_set="$trigger_input_sets"
-      fi
+      return 1
+    }
+    body_file="$(hts_mktemp hts-body)" || {
+      hts_err "could not create temp body file"
+      hts_rm -f "$trig_file"
+      return 1
+    }
+    resolved_meta="$(
+      hts_resolve_trigger_input_yaml "$trig_file" "$branch" "$repo" "$connector" "$body_file"
+    )" || {
+      local ec=$?
+      hts_rm -f "$trig_file" "$body_file"
+      return $ec
+    }
+    hts_rm -f "$trig_file"
+    branch="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("branch") or "")')"
+    repo="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("repo") or "")')"
+    connector="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("connector") or "")')"
+    has_body="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(1 if json.load(sys.stdin).get("has_body") else 0)')"
+    # Fallback: trigger inputSetRefs when there is no inline inputYaml
+    local trigger_input_sets=""
+    trigger_input_sets="$(print -- "$resolved_meta" | hts_python -c 'import json,sys; print(json.load(sys.stdin).get("input_set_refs") or "")')"
+    if [[ -z "$input_set" && -n "$trigger_input_sets" ]]; then
+      input_set="$trigger_input_sets"
+    fi
+    if [[ "$dry_run" != "1" ]]; then
       print -- "$resolved_meta" | hts_python -c '
 import json,sys
 for w in json.load(sys.stdin).get("warnings") or []:
@@ -653,12 +646,12 @@ for w in json.load(sys.stdin).get("warnings") or []:
 ' 2>/dev/null | while IFS= read -r w; do
         [[ -n "$w" ]] && hts_log "warn: $w"
       done
-      if [[ "$has_body" != "1" ]]; then
-        hts_rm -f "$body_file"
-        body_file=""
-        if [[ -z "$input_set" ]]; then
-          hts_log "warn: trigger=$trigger_id has no inputYaml or inputSetRefs — execute will use pipeline defaults only"
-        fi
+    fi
+    if [[ "$has_body" != "1" ]]; then
+      hts_rm -f "$body_file"
+      body_file=""
+      if [[ -z "$input_set" && "$dry_run" != "1" ]]; then
+        hts_log "warn: trigger=$trigger_id has no inputYaml or inputSetRefs — execute will use pipeline defaults only"
       fi
     fi
   fi
@@ -684,13 +677,7 @@ for w in json.load(sys.stdin).get("warnings") or []:
   fi
 
   if [[ "$dry_run" == "1" ]]; then
-    local inputs="none"
-    if [[ -n "$body_file" ]]; then
-      inputs="inputYaml"
-    elif [[ -n "$input_set" ]]; then
-      inputs="inputSet:${input_set}"
-    fi
-    hts_log "dry-run  ${alias:+$alias  }execute  ${org}/${project}/${pipeline_id}  branch=${branch:--}  trigger=${trigger_id:--}  inputs=${inputs}${repo:+  repo=${repo}}${connector:+  connector=${connector}}"
+    # Preflight passed (trigger fetched + inputYaml resolved when present). No POST.
     hts_rm -f "$body_file"
     return 0
   fi
@@ -744,10 +731,6 @@ hts_fire_entry() {
   etype="$(hts_entry_type "$etype")"
   case "$etype" in
     custom)
-      if [[ "$dry_run" == "1" ]]; then
-        hts_log "dry-run  ${alias:+$alias  }custom  ${org}/${project}/${pipeline_id}  trigger=${trigger}"
-        return 0
-      fi
       hts_fire_custom_trigger "$profile" "$org" "$project" "$pipeline_id" "$trigger" "$dry_run"
       ;;
     *)
@@ -796,7 +779,7 @@ hts_run_matrix() {
   local cli_branch="${8:-}"
   cli_branch="$(hts_trim "$cli_branch")"
 
-  if [[ "$dry_run" != "1" ]] && ! hts_hctl_profile_exists "$profile"; then
+  if ! hts_hctl_profile_exists "$profile"; then
     hts_die "hctl profile not found: $profile"
     return 1
   fi
@@ -825,14 +808,12 @@ hts_run_matrix() {
     return 1
   fi
 
-  if [[ "$dry_run" != "1" ]]; then
-    local ak
-    ak="$(hts_hctl_profile_field "$profile" api_key)"
-    ak="${ak:-${HARNESS_API_KEY:-}}"
-    if [[ -z "$ak" ]]; then
-      hts_die "no API key for profile '$profile' — run: hts init / hctl init (dry-run skips this)"
-      return 1
-    fi
+  local ak
+  ak="$(hts_hctl_profile_field "$profile" api_key)"
+  ak="${ak:-${HARNESS_API_KEY:-}}"
+  if [[ -z "$ak" ]]; then
+    hts_die "no API key for profile '$profile' — run: hts init / hctl init"
+    return 1
   fi
 
   local host account
@@ -864,13 +845,16 @@ print(0)
     return 1
   fi
 
-  hts_log "profile=$profile module=$module entries=$count dry_run=$dry_run${cli_branch:+ branch=$cli_branch}"
+  if [[ "$dry_run" != "1" ]]; then
+    hts_log "profile=$profile module=$module entries=$count${cli_branch:+ branch=$cli_branch}"
+  fi
 
   local ok=0 fail=0
   local results=()
   local targets=()
   local alias trigger org project pid etype repo connector input_set branch
   local resp ui_url trig_status trig_msg fire_ec line
+  local errfile reason
 
   # Materialize target rows first (no network yet).
   while IFS=$'\t' read -r alias etype trigger org project pid repo connector input_set; do
@@ -914,7 +898,11 @@ for e in json.load(sys.stdin):
         branch="$(hts_prompt_run_branch "$alias" "$org" "$project" "$pid")" || {
           hts_err "cancelled while prompting for branch ($alias)"
           skipped=$((skipped + 1))
-          results+=("${alias}"$'\t'"ERROR"$'\t'"")
+          if [[ "$dry_run" == "1" ]]; then
+            print -- "FAIL     $alias  (no branch)"
+          else
+            results+=("${alias}"$'\t'"ERROR"$'\t'"")
+          fi
           continue
         }
         branch="$(hts_trim "$branch")"
@@ -922,7 +910,11 @@ for e in json.load(sys.stdin):
       if [[ -z "$branch" ]]; then
         hts_err "no branch for $alias — skipping"
         skipped=$((skipped + 1))
-        results+=("${alias}"$'\t'"ERROR"$'\t'"")
+        if [[ "$dry_run" == "1" ]]; then
+          print -- "FAIL     $alias  (no branch)"
+        else
+          results+=("${alias}"$'\t'"ERROR"$'\t'"")
+        fi
         continue
       fi
     fi
@@ -936,21 +928,50 @@ for e in json.load(sys.stdin):
 
   if [[ -z "$cli_branch" && "$need_branch_prompt" == "1" ]]; then
     print -- "" >/dev/tty 2>/dev/null || true
-    hts_log "inputs collected — triggering ${#planned[@]} pipeline(s)…"
+    if [[ "$dry_run" == "1" ]]; then
+      hts_log "inputs collected — dry-run ${#planned[@]} pipeline(s)…"
+    else
+      hts_log "inputs collected — triggering ${#planned[@]} pipeline(s)…"
+    fi
   fi
 
   for line in "${planned[@]}"; do
     IFS=$'\t' read -r alias etype trigger org project pid repo connector input_set branch <<<"$line"
-    if [[ "$dry_run" != "1" ]]; then
-      hts_log "→ $alias  type=$etype  org=$org project=$project pipeline=$pid branch=${branch:-(-)} trigger=${trigger:-(-)} repo=${repo:-(-)}"
-    fi
-    fire_ec=0
-    resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "$dry_run" "$branch" "$repo" "$connector" "$input_set" "$alias")" || fire_ec=$?
     if [[ "$dry_run" == "1" ]]; then
-      trig_status="DRY-RUN"
-      ui_url=""
-      ok=$((ok + 1))
-    elif (( fire_ec != 0 )); then
+      fire_ec=0
+      errfile="$(hts_mktemp hts-dry-err)" || errfile=""
+      if [[ -n "$errfile" ]]; then
+        resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "1" "$branch" "$repo" "$connector" "$input_set" "$alias" 2>"$errfile")" || fire_ec=$?
+      else
+        resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "1" "$branch" "$repo" "$connector" "$input_set" "$alias")" || fire_ec=$?
+      fi
+      if (( fire_ec == 0 )); then
+        print -- "SUCCESS  $alias"
+        ok=$((ok + 1))
+      else
+        reason=""
+        if [[ -n "$errfile" && -s "$errfile" ]]; then
+          while IFS= read -r reason; do
+            reason="${reason#\[hts\] error: }"
+            reason="$(hts_trim "$reason")"
+            [[ -n "$reason" ]] && break
+          done < "$errfile"
+        fi
+        if [[ -n "$reason" ]]; then
+          print -- "FAIL     $alias  ($reason)"
+        else
+          print -- "FAIL     $alias"
+        fi
+        fail=$((fail + 1))
+      fi
+      [[ -n "$errfile" ]] && hts_rm -f "$errfile"
+      continue
+    fi
+
+    hts_log "→ $alias  type=$etype  org=$org project=$project pipeline=$pid branch=${branch:-(-)} trigger=${trigger:-(-)} repo=${repo:-(-)}"
+    fire_ec=0
+    resp="$(hts_fire_entry "$profile" "$module" "$etype" "$org" "$project" "$pid" "$trigger" "0" "$branch" "$repo" "$connector" "$input_set" "$alias")" || fire_ec=$?
+    if (( fire_ec != 0 )); then
       trig_status="ERROR"
       ui_url=""
       fail=$((fail + 1))
@@ -977,6 +998,11 @@ for e in json.load(sys.stdin):
   done
 
   fail=$((fail + skipped))
+
+  if [[ "$dry_run" == "1" ]]; then
+    (( fail == 0 ))
+    return $?
+  fi
 
   print -- ""
   if (( ${#results[@]} )); then
